@@ -706,10 +706,7 @@ edition = "2021"
 description = "MCP server for {{name}} project with SSE transport"
 
 [dependencies]
-# For local development, use path dependency:
-mcpr = { path = "../.." }
-# For production, use version from crates.io:
-# mcpr = "0.2.0"
+mcpr = "0.2"
 clap = { version = "4.4", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -726,10 +723,7 @@ edition = "2021"
 description = "MCP client for {{name}} project with SSE transport"
 
 [dependencies]
-# For local development, use path dependency:
-mcpr = { path = "../.." }
-# For production, use version from crates.io:
-# mcpr = "0.2.0"
+mcpr = "0.2"
 clap = { version = "4.4", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
