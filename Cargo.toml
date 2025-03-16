@@ -9,6 +9,16 @@ repository = "https://github.com/conikeec/mcpr"
 readme = "README.md"
 keywords = ["mcp", "anthropic", "claude", "ai", "llm"]
 categories = ["api-bindings", "command-line-utilities"]
+include = [
+    "src/**/*.rs",
+    "Cargo.toml",
+    "LICENSE",
+    "README.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "MCP.md",
+    ".github/workflows/rust.yml",
+]
 
 [lib]
 name = "mcpr"
