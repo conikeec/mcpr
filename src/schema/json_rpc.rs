@@ -26,6 +26,7 @@ pub enum JSONRPCMessage {
 
 /// A request that expects a response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct JSONRPCRequest {
     pub jsonrpc: String,
     pub id: RequestId,
@@ -36,6 +37,7 @@ pub struct JSONRPCRequest {
 
 /// A notification which does not expect a response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct JSONRPCNotification {
     pub jsonrpc: String,
     pub method: String,
@@ -45,6 +47,7 @@ pub struct JSONRPCNotification {
 
 /// A successful (non-error) response to a request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct JSONRPCResponse {
     pub jsonrpc: String,
     pub id: RequestId,
@@ -53,6 +56,7 @@ pub struct JSONRPCResponse {
 
 /// A response to a request that indicates an error occurred.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct JSONRPCError {
     pub jsonrpc: String,
     pub id: RequestId,
@@ -61,6 +65,7 @@ pub struct JSONRPCError {
 
 /// Error object in a JSON-RPC error response
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct JSONRPCErrorObject {
     /// The error type that occurred.
     pub code: i32,
@@ -172,15 +177,28 @@ impl JSONRPCResponse {
 
 impl JSONRPCError {
     /// Create a new JSON-RPC error
-    pub fn new(id: RequestId, code: i32, message: String, data: Option<Value>) -> Self {
+    pub fn new(id: RequestId, error_obj: JSONRPCErrorObject) -> Self {
         Self {
             jsonrpc: JSONRPC_VERSION.to_string(),
             id,
-            error: JSONRPCErrorObject {
+            error: error_obj,
+        }
+    }
+
+    /// Create a new JSON-RPC error with details
+    pub fn new_with_details(
+        id: RequestId,
+        code: i32,
+        message: String,
+        data: Option<Value>,
+    ) -> Self {
+        Self::new(
+            id,
+            JSONRPCErrorObject {
                 code,
                 message,
                 data,
             },
-        }
+        )
     }
 }

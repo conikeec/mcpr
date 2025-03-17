@@ -10,6 +10,7 @@ use super::common::{
 
 /// Server capabilities
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ServerCapabilities {
     /// Experimental, non-standard capabilities that the server supports.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -34,6 +35,7 @@ pub struct ServerCapabilities {
 
 /// Prompts capability
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PromptsCapability {
     /// Whether this server supports notifications for changes to the prompt list.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -42,6 +44,7 @@ pub struct PromptsCapability {
 
 /// Resources capability
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ResourcesCapability {
     /// Whether this server supports subscribing to resource updates.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -54,6 +57,7 @@ pub struct ResourcesCapability {
 
 /// Tools capability
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ToolsCapability {
     /// Whether this server supports notifications for changes to the tool list.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -62,6 +66,7 @@ pub struct ToolsCapability {
 
 /// After receiving an initialize request from the client, the server sends this response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct InitializeResult {
     /// The version of the Model Context Protocol that the server wants to use.
     pub protocol_version: String,
@@ -306,4 +311,12 @@ pub enum ToolResultContent {
     Text(TextContent),
     Image(ImageContent),
     Resource(EmbeddedResource),
+}
+
+/// Result of a tool call
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolCallResult {
+    /// The result of the tool call
+    pub result: Value,
 }

@@ -4,8 +4,13 @@ use crate::{
     constants::LATEST_PROTOCOL_VERSION,
     error::MCPError,
     schema::{
-        common::Tool,
+        client::{CallToolParams, ListToolsResult},
+        common::{Implementation, Tool},
         json_rpc::{JSONRPCMessage, JSONRPCResponse, RequestId},
+        server::{
+            CallToolResult, InitializeResult, ServerCapabilities, ToolCallResult,
+            ToolResultContent, ToolsCapability,
+        },
     },
     transport::Transport,
 };
@@ -145,6 +150,14 @@ impl<T: Transport> Server<T> {
                             info!("Received tool call request");
                             self.handle_tool_call(id, params)?;
                         }
+                        "tools/list" => {
+                            info!("Received tools list request");
+                            self.handle_tools_list(id, params)?;
+                        }
+                        "tools/call" => {
+                            info!("Received tools/call request");
+                            self.handle_tools_call(id, params)?;
+                        }
                         "shutdown" => {
                             info!("Received shutdown request");
                             self.handle_shutdown(id)?;
@@ -178,17 +191,39 @@ impl<T: Transport> Server<T> {
             .as_mut()
             .ok_or_else(|| MCPError::Protocol("Transport not initialized".to_string()))?;
 
-        // Create initialization response
+        // Create server capabilities with tool support
+        let capabilities = ServerCapabilities {
+            experimental: None,
+            logging: None,
+            prompts: None,
+            resources: None,
+            tools: if !self.config.tools.is_empty() {
+                Some(ToolsCapability {
+                    list_changed: Some(false),
+                })
+            } else {
+                None
+            },
+        };
+
+        // Create server information
+        let server_info = Implementation {
+            name: self.config.name.clone(),
+            version: self.config.version.clone(),
+        };
+
+        // Create initialization result
+        let init_result = InitializeResult {
+            protocol_version: LATEST_PROTOCOL_VERSION.to_string(),
+            capabilities,
+            server_info,
+            instructions: None,
+        };
+
+        // Create response with proper result
         let response = JSONRPCResponse::new(
             id,
-            serde_json::json!({
-                "protocol_version": LATEST_PROTOCOL_VERSION,
-                "server_info": {
-                    "name": self.config.name,
-                    "version": self.config.version
-                },
-                "tools": self.config.tools
-            }),
+            serde_json::to_value(init_result).map_err(MCPError::Serialization)?,
         );
 
         // Send the response
@@ -209,6 +244,7 @@ impl<T: Transport> Server<T> {
             MCPError::Protocol("Missing parameters in tool call request".to_string())
         })?;
 
+        // Note: we keep using "name" and "parameters" as keys since that's what the incoming JSON will have
         let tool_name = params
             .get("name")
             .and_then(|v| v.as_str())
@@ -224,12 +260,103 @@ impl<T: Transport> Server<T> {
         // Call the handler
         match handler(tool_params) {
             Ok(result) => {
-                // Create tool result response
+                // Create proper tool result
+                let tool_result = ToolCallResult { result };
+
+                // Create response with proper result
                 let response = JSONRPCResponse::new(
                     id,
-                    serde_json::json!({
-                        "result": result
-                    }),
+                    serde_json::to_value(tool_result).map_err(MCPError::Serialization)?,
+                );
+
+                // Send the response
+                transport.send(&JSONRPCMessage::Response(response))?;
+            }
+            Err(e) => {
+                // Send error response
+                self.send_error(id, -32000, format!("Tool execution failed: {}", e), None)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handle tools list request
+    fn handle_tools_list(&mut self, id: RequestId, _params: Option<Value>) -> Result<(), MCPError> {
+        let transport = self
+            .transport
+            .as_mut()
+            .ok_or_else(|| MCPError::Protocol("Transport not initialized".to_string()))?;
+
+        // Create tools list result
+        let tools_list = ListToolsResult {
+            next_cursor: None, // No pagination in this implementation
+            tools: self.config.tools.clone(),
+        };
+
+        // Create response with proper result
+        let response = JSONRPCResponse::new(
+            id,
+            serde_json::to_value(tools_list).map_err(MCPError::Serialization)?,
+        );
+
+        // Send the response
+        transport.send(&JSONRPCMessage::Response(response))?;
+
+        Ok(())
+    }
+
+    /// Handle tools/call request
+    fn handle_tools_call(&mut self, id: RequestId, params: Option<Value>) -> Result<(), MCPError> {
+        let transport = self
+            .transport
+            .as_mut()
+            .ok_or_else(|| MCPError::Protocol("Transport not initialized".to_string()))?;
+
+        // Extract the parameters
+        let params = params.ok_or_else(|| {
+            MCPError::Protocol("Missing parameters in tools/call request".to_string())
+        })?;
+
+        // Parse the parameters as CallToolParams
+        let call_params: CallToolParams = serde_json::from_value(params.clone())
+            .map_err(|e| MCPError::Protocol(format!("Invalid tools/call parameters: {}", e)))?;
+
+        // Get the tool name and arguments
+        let tool_name = call_params.name;
+
+        // Convert arguments to JSON Value if they exist, otherwise use null
+        let tool_params = match call_params.arguments {
+            Some(args) => serde_json::to_value(args).unwrap_or(Value::Null),
+            None => Value::Null,
+        };
+
+        // Find the tool handler
+        let handler = self.tool_handlers.get(&tool_name).ok_or_else(|| {
+            MCPError::Protocol(format!("No handler registered for tool '{}'", tool_name))
+        })?;
+
+        // Call the handler
+        match handler(tool_params) {
+            Ok(result) => {
+                // Create a response with the tool result in standard CallToolResult format
+                // For simplicity, we'll just convert to text content
+                let tool_result = CallToolResult {
+                    content: vec![ToolResultContent::Text(
+                        crate::schema::common::TextContent {
+                            r#type: "text".to_string(),
+                            text: serde_json::to_string_pretty(&result)
+                                .unwrap_or_else(|_| format!("{:?}", result)),
+                            annotations: None,
+                        },
+                    )],
+                    is_error: None,
+                };
+
+                // Create response
+                let response = JSONRPCResponse::new(
+                    id,
+                    serde_json::to_value(tool_result).map_err(MCPError::Serialization)?,
                 );
 
                 // Send the response
@@ -277,7 +404,7 @@ impl<T: Transport> Server<T> {
             .ok_or_else(|| MCPError::Protocol("Transport not initialized".to_string()))?;
 
         // Create error response
-        let error = JSONRPCMessage::Error(crate::schema::json_rpc::JSONRPCError::new(
+        let error = JSONRPCMessage::Error(crate::schema::json_rpc::JSONRPCError::new_with_details(
             id, code, message, data,
         ));
 

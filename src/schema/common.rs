@@ -42,6 +42,7 @@ pub enum Role {
 
 /// Base for objects that include optional annotations for the client.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Annotated {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub annotations: Option<Annotations>,
@@ -49,6 +50,7 @@ pub struct Annotated {
 
 /// Annotations for objects
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Annotations {
     /// Describes who the intended customer of this object or data is.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -64,6 +66,7 @@ pub struct Annotations {
 
 /// Describes an implementation of MCP.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Implementation {
     pub name: String,
     pub version: String,
@@ -228,6 +231,7 @@ pub enum PromptMessageContent {
 
 /// Definition for a tool the client can call.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Tool {
     /// The name of the tool.
     pub name: String,
@@ -242,6 +246,7 @@ pub struct Tool {
 
 /// JSON Schema for tool input
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ToolInputSchema {
     pub r#type: String,
 
