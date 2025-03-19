@@ -7,7 +7,7 @@ description = "MCP Client example using MCPR macros"
 
 [dependencies]
 mcpr = { path = "../../..", features = ["macros"] }
-mcpr-macros = { path = "../../../mcpr-macros" }
+mcpr-macros = { path = "../../../macros" }
 clap = { version = "4.4", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

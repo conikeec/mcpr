@@ -13,7 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 mcpr = { path = "../..", features = ["macros"] }
-mcpr-macros = { path = "../../mcpr-macros" }
+mcpr-macros = { path = "../../macros" }
 
 # These are internal workspace members
 # They don't need to be in a separate workspace as they're already in the main workspace

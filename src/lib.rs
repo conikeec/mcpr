@@ -14,6 +14,7 @@ pub mod constants {
 pub mod auth;
 pub mod client;
 pub mod error;
+pub mod macros;
 pub mod prompt;
 pub mod resource;
 pub mod schema;
