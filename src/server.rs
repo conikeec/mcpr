@@ -3,15 +3,24 @@
 use crate::{
     constants::LATEST_PROTOCOL_VERSION,
     error::MCPError,
+    prompt::PromptProvider,
+    resource::ResourceProvider,
     schema::{
         common::Tool,
-        json_rpc::{JSONRPCMessage, JSONRPCResponse, RequestId},
+        json_rpc::{JSONRPCError, JSONRPCMessage, JSONRPCRequest, JSONRPCResponse, RequestId},
+        server::CallToolResult,
     },
-    transport::Transport,
+    tools::ToolsProvider,
+    transport::{Transport, TransportExt},
 };
 use log::{error, info};
 use serde_json::Value;
 use std::collections::HashMap;
+
+// Trait for tool registration
+pub trait ToolRegistration {
+    fn register_tool(tools: &mut Vec<crate::schema::common::Tool>);
+}
 
 /// Server configuration
 pub struct ServerConfig {
@@ -98,19 +107,21 @@ impl<T: Transport> Server<T> {
         Ok(())
     }
 
-    /// Start the server with the given transport
-    pub fn start(&mut self, mut transport: T) -> Result<(), MCPError> {
-        // Start the transport
-        transport.start()?;
+    /// Register tools from a ToolsProvider
+    pub fn register_tools_provider<P: ToolsProvider>(
+        &mut self,
+        provider: &P,
+    ) -> Result<(), MCPError> {
+        let tools = provider.get_tools();
 
-        // Store the transport
-        self.transport = Some(transport);
+        for tool in tools {
+            self.config.tools.push(tool.clone());
+        }
 
-        // Process messages
-        self.process_messages()
+        Ok(())
     }
 
-    /// Process incoming messages
+    /// Process a message from the server implementation
     fn process_messages(&mut self) -> Result<(), MCPError> {
         loop {
             let message = {
@@ -139,25 +150,30 @@ impl<T: Transport> Server<T> {
                     match method.as_str() {
                         "initialize" => {
                             info!("Received initialization request");
-                            self.handle_initialize(id, params)?;
+                            // Convert id and params to proper types for handle_initialize
+                            let response = self.handle_initialize(&request)?;
+                            self.send_response(response)?;
                         }
                         "tool_call" => {
                             info!("Received tool call request");
-                            self.handle_tool_call(id, params)?;
+                            let response = self.process_tool_call(&request)?;
+                            self.send_response(response)?;
                         }
                         "shutdown" => {
                             info!("Received shutdown request");
-                            self.handle_shutdown(id)?;
+                            let response = JSONRPCResponse::new(id, serde_json::json!({}));
+                            self.send_response(response)?;
                             break;
                         }
                         _ => {
                             error!("Unknown method: {}", method);
-                            self.send_error(
+                            let error_response = JSONRPCError::new(
                                 id,
                                 -32601,
                                 format!("Method not found: {}", method),
                                 None,
-                            )?;
+                            );
+                            self.send_error(error_response)?;
                         }
                     }
                 }
@@ -171,30 +187,59 @@ impl<T: Transport> Server<T> {
         Ok(())
     }
 
-    /// Handle initialization request
-    fn handle_initialize(&mut self, id: RequestId, _params: Option<Value>) -> Result<(), MCPError> {
+    // Helper method to send response
+    fn send_response(&mut self, response: JSONRPCResponse) -> Result<(), MCPError> {
         let transport = self
             .transport
             .as_mut()
             .ok_or_else(|| MCPError::Protocol("Transport not initialized".to_string()))?;
 
+        transport.send(&JSONRPCMessage::Response(response))?;
+        Ok(())
+    }
+
+    // Helper method to send error
+    fn send_error(&mut self, error: JSONRPCError) -> Result<(), MCPError> {
+        let transport = self
+            .transport
+            .as_mut()
+            .ok_or_else(|| MCPError::Protocol("Transport not initialized".to_string()))?;
+
+        transport.send(&JSONRPCMessage::Error(error))?;
+        Ok(())
+    }
+
+    /// Start the server with the given transport
+    pub fn start(&mut self, mut transport: T) -> Result<(), MCPError> {
+        // Start the transport
+        transport.start()?;
+
+        // Store the transport
+        self.transport = Some(transport);
+
+        // Process messages
+        self.process_messages()
+    }
+
+    /// Handle initialization request
+    fn handle_initialize(&mut self, request: &JSONRPCRequest) -> Result<JSONRPCResponse, MCPError> {
         // Create initialization response
-        let response = JSONRPCResponse::new(
-            id,
+        Ok(JSONRPCResponse::new(
+            request.id.clone(),
             serde_json::json!({
                 "protocol_version": LATEST_PROTOCOL_VERSION,
                 "server_info": {
                     "name": self.config.name,
                     "version": self.config.version
                 },
-                "tools": self.config.tools
+                "tools": self.config.tools,
+                "capabilities": {
+                    "tools": {
+                        "list_changed": false
+                    }
+                }
             }),
-        );
-
-        // Send the response
-        transport.send(&JSONRPCMessage::Response(response))?;
-
-        Ok(())
+        ))
     }
 
     /// Handle tool call request
@@ -237,53 +282,84 @@ impl<T: Transport> Server<T> {
             }
             Err(e) => {
                 // Send error response
-                self.send_error(id, -32000, format!("Tool execution failed: {}", e), None)?;
+                self.send_error(JSONRPCError::new(
+                    id,
+                    -32000,
+                    format!("Tool execution failed: {}", e),
+                    None,
+                ))?;
             }
         }
 
         Ok(())
     }
 
-    /// Handle shutdown request
-    fn handle_shutdown(&mut self, id: RequestId) -> Result<(), MCPError> {
-        let transport = self
-            .transport
-            .as_mut()
-            .ok_or_else(|| MCPError::Protocol("Transport not initialized".to_string()))?;
+    /// Process a tool call with proper mapping to handlers
+    fn process_tool_call(&mut self, request: &JSONRPCRequest) -> Result<JSONRPCResponse, MCPError> {
+        if let Some(params) = &request.params {
+            let tool_name = params
+                .get("name")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| MCPError::Protocol("Missing tool name in parameters".to_string()))?;
 
-        // Create shutdown response
-        let response = JSONRPCResponse::new(id, serde_json::json!({}));
+            let parameters = params.get("parameters").cloned().unwrap_or(Value::Null);
 
-        // Send the response
-        transport.send(&JSONRPCMessage::Response(response))?;
+            // Find the tool handler
+            let handler = self.tool_handlers.get(tool_name).ok_or_else(|| {
+                MCPError::Protocol(format!("No handler registered for tool '{}'", tool_name))
+            })?;
 
-        // Close the transport
-        transport.close()?;
+            // Call the handler
+            match handler(parameters) {
+                Ok(result) => {
+                    // Create tool result response using the CallToolResult schema
+                    let tool_result = CallToolResult {
+                        content: vec![crate::schema::server::ToolResultContent::Text(
+                            crate::schema::common::TextContent {
+                                text: result.to_string(),
+                                r#type: "text".to_string(),
+                                annotations: None,
+                            },
+                        )],
+                        is_error: None,
+                    };
 
-        Ok(())
+                    Ok(JSONRPCResponse::new(
+                        request.id.clone(),
+                        serde_json::to_value(tool_result).unwrap(),
+                    ))
+                }
+                Err(e) => {
+                    // Create error response
+                    Err(MCPError::Protocol(format!("Tool execution failed: {}", e)))
+                }
+            }
+        } else {
+            Err(MCPError::Protocol(
+                "Missing parameters in tool call".to_string(),
+            ))
+        }
     }
 
-    /// Send an error response
-    fn send_error(
-        &mut self,
-        id: RequestId,
-        code: i32,
-        message: String,
-        data: Option<Value>,
-    ) -> Result<(), MCPError> {
-        let transport = self
-            .transport
-            .as_mut()
-            .ok_or_else(|| MCPError::Protocol("Transport not initialized".to_string()))?;
+    /// Run method for processing JSON-RPC requests
+    pub fn run(&mut self) -> Result<(), MCPError> {
+        if self.transport.is_none() {
+            return Err(MCPError::Protocol("Transport not initialized".to_string()));
+        }
 
-        // Create error response
-        let error = JSONRPCMessage::Error(crate::schema::json_rpc::JSONRPCError::new(
-            id, code, message, data,
-        ));
-
-        // Send the error
-        transport.send(&error)?;
-
-        Ok(())
+        // Use process_messages for the main loop
+        self.process_messages()
     }
+}
+
+/// Trait for MCP servers
+pub trait ServerTrait {
+    /// Start the server
+    fn start(&mut self) -> Result<(), MCPError>;
+
+    /// Process incoming requests
+    fn run(&mut self) -> Result<(), MCPError>;
+
+    /// Stop the server
+    fn stop(&mut self) -> Result<(), MCPError>;
 }

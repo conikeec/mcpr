@@ -20,6 +20,14 @@ include = [
     ".github/workflows/rust.yml",
 ]
 
+[workspace]
+members = [
+    "mcpr-macros",
+    "examples/macros-example",
+    # "mcpr-demo/server",  # Commented out as it doesn't exist
+    # Add other workspace members as needed
+]
+
 [lib]
 name = "mcpr"
 path = "src/lib.rs"
@@ -42,13 +50,20 @@ tiny_http = "0.12"
 reqwest = { version = "0.12", features = ["json", "blocking"] }
 rand = "0.8"
 tungstenite = { version = "0.20", features = ["native-tls"] }
+mcpr-macros = { path = "./mcpr-macros", optional = true }
 
 # Optional dependencies that are only used by specific features
 [dev-dependencies]
 tokio = { version = "1.35", features = ["full", "test-util"] }
+# Add cargo-husky for Git hooks
+cargo-husky = { version = "1", features = [
+    "precommit-hook",
+    "run-cargo-clippy",
+] }
 
 [features]
 default = []
 async = ["tokio"]
+macros = ["mcpr-macros"]
 
 # Examples are now in their own separate crates with their own Cargo.toml files

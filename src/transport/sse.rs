@@ -111,7 +111,7 @@ impl Transport for SSETransport {
     fn start(&mut self) -> Result<(), MCPError> {
         if self.is_connected {
             debug!("SSE transport already connected");
-            return Ok(());
+            return Err(MCPError::AlreadyConnected);
         }
 
         info!("Starting SSE transport with URI: {}", self.uri);
@@ -458,138 +458,7 @@ impl Transport for SSETransport {
         Ok(())
     }
 
-    fn send<T: Serialize>(&mut self, message: &T) -> Result<(), MCPError> {
-        if !self.is_connected {
-            return Err(MCPError::Transport(
-                "SSE transport not connected".to_string(),
-            ));
-        }
 
-        // Serialize the message to JSON
-        let serialized_message = match serde_json::to_string(message) {
-            Ok(json) => json,
-            Err(e) => {
-                let error_msg = format!("Failed to serialize message: {}", e);
-                error!("{}", error_msg);
-                return Err(MCPError::Serialization(e));
-            }
-        };
-        debug!("Sending message: {}", serialized_message);
-
-        if self.is_server {
-            // Server mode - add the message to the client message queue
-            debug!(
-                "Server adding message to client queue: {}",
-                serialized_message
-            );
-
-            // In server mode, we need to add the message to the client message queue
-            // This is a separate queue from the server's message queue
-            if let Ok(clients) = self.active_clients.lock() {
-                // Add the message to all connected clients' queues
-                for client_id in clients.keys() {
-                    if let Ok(mut client_messages) = self.client_messages.lock() {
-                        client_messages
-                            .entry(client_id.clone())
-                            .or_insert_with(VecDeque::new)
-                            .push_back(serialized_message.clone());
-                        debug!("Added message to client {}'s queue", client_id);
-                    }
-                }
-                debug!("Server successfully added message to client queues");
-                Ok(())
-            } else {
-                error!("Failed to lock active clients");
-                Err(MCPError::Transport(
-                    "Failed to lock active clients".to_string(),
-                ))
-            }
-        } else {
-            // Client mode - send a POST request to the server
-            debug!("Client sending message to server: {}", serialized_message);
-
-            let client = Client::new();
-            match client
-                .post(&self.uri)
-                .body(serialized_message.clone())
-                .header(reqwest::header::CONTENT_TYPE, "application/json")
-                .send()
-            {
-                Ok(response) => {
-                    if response.status().is_success() {
-                        debug!("Client successfully sent message to server");
-                        Ok(())
-                    } else {
-                        let error_msg = format!(
-                            "Failed to send message to server: HTTP {}",
-                            response.status()
-                        );
-                        error!("{}", error_msg);
-                        Err(MCPError::Transport(error_msg))
-                    }
-                }
-                Err(e) => {
-                    let error_msg = format!("Failed to send message to server: {}", e);
-                    error!("{}", error_msg);
-                    Err(MCPError::Transport(error_msg))
-                }
-            }
-        }
-    }
-
-    fn receive<T: DeserializeOwned>(&mut self) -> Result<T, MCPError> {
-        if !self.is_connected {
-            return Err(MCPError::Transport(
-                "SSE transport not connected".to_string(),
-            ));
-        }
-
-        // Use a timeout of 10 seconds
-        let timeout = 10000;
-        let start_time = Instant::now();
-
-        // Try to get a message from the queue with timeout
-        let message = loop {
-            if let Ok(mut queue) = self.message_queue.lock() {
-                if let Some(message) = queue.pop_front() {
-                    debug!("Received message: {}", message);
-                    break message;
-                }
-            } else {
-                error!("Failed to lock message queue");
-                return Err(MCPError::Transport(
-                    "Failed to lock message queue".to_string(),
-                ));
-            }
-
-            // Check if we've exceeded the timeout
-            if start_time.elapsed().as_millis() > timeout as u128 {
-                debug!("Receive timeout after {} ms", timeout);
-                return Err(MCPError::Transport(
-                    "Timeout waiting for message".to_string(),
-                ));
-            }
-
-            // Sleep for a short time before checking again
-            thread::sleep(Duration::from_millis(100));
-        };
-
-        // Parse the message
-        match serde_json::from_str::<T>(&message) {
-            Ok(parsed) => {
-                debug!("Successfully parsed message");
-                Ok(parsed)
-            }
-            Err(e) => {
-                let error_msg = format!(
-                    "Failed to deserialize message: {} - Content: {}",
-                    e, message
-                );
-                error!("{}", error_msg);
-                Err(MCPError::Serialization(e))
-            }
-        }
-    }
 
     fn close(&mut self) -> Result<(), MCPError> {
         if !self.is_connected {
@@ -635,11 +504,81 @@ impl Transport for SSETransport {
         self.on_error = callback;
     }
 
-    fn set_on_message<F>(&mut self, callback: Option<F>)
-    where
-        F: Fn(&str) + Send + Sync + 'static,
-    {
-        debug!("Setting on_message callback for SSE transport");
-        self.on_message = callback.map(|f| Box::new(f) as Box<dyn Fn(&str) + Send + Sync>);
+    fn is_connected(&self) -> bool {
+        self.is_connected
+    }
+
+    fn on_close(&mut self, callback: Box<dyn Fn() + Send + Sync>) {
+        self.on_close = Some(callback);
+    }
+
+    fn on_error(&mut self, callback: Box<dyn Fn(&MCPError) + Send + Sync>) {
+        self.on_error = Some(callback);
+    }
+
+    fn on_message(&mut self, callback: Box<dyn Fn(&str) + Send + Sync>) {
+        self.on_message = Some(callback);
+    }
+
+    fn send_json(&mut self, json_string: &str) -> Result<(), MCPError> {
+        if !self.is_connected {
+            let error = MCPError::NotConnected;
+            self.handle_error(&error);
+            return Err(error);
+        }
+
+        // Implementation depends on whether we're in client or server mode
+        if self.is_server {
+            // In server mode, find the client to send to
+            if let Ok(client_id) = self.client_id.lock() {
+                if let Some(id) = client_id.as_ref() {
+                    // Add message to client's queue
+                    if let Ok(mut client_msgs) = self.client_messages.lock() {
+                        let queue = client_msgs.entry(id.clone()).or_insert_with(VecDeque::new);
+                        queue.push_back(json_string.to_string());
+                        return Ok(());
+                    }
+                }
+            }
+            Err(MCPError::Transport("No client to send to".to_string()))
+        } else {
+            // In client mode, send message to server via HTTP POST
+            let client = Client::new();
+            let response = match client.post(&self.uri).body(json_string.to_string()).send() {
+                Ok(response) => response,
+                Err(e) => {
+                    let error =
+                        MCPError::Transport(format!("Failed to send message to server: {}", e));
+                    self.handle_error(&error);
+                    return Err(error);
+                }
+            };
+
+            if !response.status().is_success() {
+                let error =
+                    MCPError::Transport(format!("Server returned error: {}", response.status()));
+                self.handle_error(&error);
+                return Err(error);
+            }
+
+            Ok(())
+        }
+    }
+
+    fn receive_json(&mut self) -> Result<String, MCPError> {
+        if !self.is_connected {
+            let error = MCPError::NotConnected;
+            self.handle_error(&error);
+            return Err(error);
+        }
+
+        // Try to get a message from the queue
+        if let Ok(mut queue) = self.message_queue.lock() {
+            if let Some(message) = queue.pop_front() {
+                return Ok(message);
+            }
+        }
+
+        Err(MCPError::Transport("No messages available".to_string()))
     }
 }

@@ -21,7 +21,6 @@
 
 use crate::error::MCPError;
 use serde::{de::DeserializeOwned, Serialize};
-use std::io;
 
 /// Type alias for a closure that is called when an error occurs
 pub type ErrorCallback = Box<dyn Fn(&MCPError) + Send + Sync>;
@@ -37,188 +36,67 @@ pub trait Transport {
     /// Start processing messages
     fn start(&mut self) -> Result<(), MCPError>;
 
-    /// Send a message
-    fn send<T: Serialize>(&mut self, message: &T) -> Result<(), MCPError>;
+    /// Send a message as a JSON string
+    fn send_json(&mut self, json_string: &str) -> Result<(), MCPError>;
 
-    /// Receive a message
-    fn receive<T: DeserializeOwned>(&mut self) -> Result<T, MCPError>;
+    /// Receive a message as a JSON string
+    fn receive_json(&mut self) -> Result<String, MCPError>;
 
     /// Close the connection
     fn close(&mut self) -> Result<(), MCPError>;
 
-    /// Set callback for when the connection is closed
-    fn set_on_close(&mut self, callback: Option<CloseCallback>);
-
-    /// Set callback for when an error occurs
-    fn set_on_error(&mut self, callback: Option<ErrorCallback>);
+    /// Check if the transport is connected
+    fn is_connected(&self) -> bool;
 
     /// Set callback for when a message is received
+    fn on_message(&mut self, callback: Box<dyn Fn(&str) + Send + Sync>);
+
+    /// Set callback for when an error occurs
+    fn on_error(&mut self, callback: Box<dyn Fn(&MCPError) + Send + Sync>);
+
+    /// Set callback for when the connection is closed
+    fn on_close(&mut self, callback: Box<dyn Fn() + Send + Sync>);
+
+    /// Set callback for when the connection is closed (deprecated, use on_close)
+    fn set_on_close(&mut self, callback: Option<CloseCallback>);
+
+    /// Set callback for when an error occurs (deprecated, use on_error)
+    fn set_on_error(&mut self, callback: Option<ErrorCallback>);
+}
+
+/// Extension trait with convenience methods using generic parameters
+pub trait TransportExt: Transport {
+    /// Send a message using serialization
+    fn send<T: Serialize>(&mut self, message: &T) -> Result<(), MCPError> {
+        let json = serde_json::to_string(message)?;
+        self.send_json(&json)
+    }
+
+    /// Receive a message and deserialize it
+    fn receive<T: DeserializeOwned>(&mut self) -> Result<T, MCPError> {
+        let json = self.receive_json()?;
+        match serde_json::from_str(&json) {
+            Ok(value) => Ok(value),
+            Err(e) => Err(MCPError::Deserialization(e)),
+        }
+    }
+
+    /// Set callback for when a message is received (with generic type parameter)
     fn set_on_message<F>(&mut self, callback: Option<F>)
     where
-        F: Fn(&str) + Send + Sync + 'static;
+        F: Fn(&str) + Send + Sync + 'static,
+    {
+        if let Some(cb) = callback {
+            self.on_message(Box::new(cb));
+        }
+    }
 }
+
+// Implement TransportExt for all types that implement Transport
+impl<T: Transport> TransportExt for T {}
 
 /// Standard IO transport
-pub mod stdio {
-    use super::*;
-    use std::io::{BufRead, BufReader, Write};
-
-    /// Standard IO transport
-    pub struct StdioTransport {
-        reader: BufReader<Box<dyn io::Read + Send>>,
-        writer: Box<dyn io::Write + Send>,
-        is_connected: bool,
-        on_close: Option<CloseCallback>,
-        on_error: Option<ErrorCallback>,
-        on_message: Option<MessageCallback>,
-    }
-
-    impl Default for StdioTransport {
-        fn default() -> Self {
-            Self::new()
-        }
-    }
-
-    impl StdioTransport {
-        /// Create a new stdio transport using stdin and stdout
-        pub fn new() -> Self {
-            Self {
-                reader: BufReader::new(Box::new(io::stdin())),
-                writer: Box::new(io::stdout()),
-                is_connected: false,
-                on_close: None,
-                on_error: None,
-                on_message: None,
-            }
-        }
-
-        /// Create a new stdio transport with custom reader and writer
-        pub fn with_reader_writer(
-            reader: Box<dyn io::Read + Send>,
-            writer: Box<dyn io::Write + Send>,
-        ) -> Self {
-            Self {
-                reader: BufReader::new(reader),
-                writer,
-                is_connected: false,
-                on_close: None,
-                on_error: None,
-                on_message: None,
-            }
-        }
-
-        /// Handle an error by calling the error callback if set
-        fn handle_error(&self, error: &MCPError) {
-            if let Some(callback) = &self.on_error {
-                callback(error);
-            }
-        }
-    }
-
-    impl Transport for StdioTransport {
-        fn start(&mut self) -> Result<(), MCPError> {
-            if self.is_connected {
-                return Ok(());
-            }
-
-            self.is_connected = true;
-            Ok(())
-        }
-
-        fn send<T: Serialize>(&mut self, message: &T) -> Result<(), MCPError> {
-            if !self.is_connected {
-                let error = MCPError::Transport("Transport not connected".to_string());
-                self.handle_error(&error);
-                return Err(error);
-            }
-
-            let json = match serde_json::to_string(message) {
-                Ok(json) => json,
-                Err(e) => {
-                    let error = MCPError::Serialization(e);
-                    self.handle_error(&error);
-                    return Err(error);
-                }
-            };
-
-            match writeln!(self.writer, "{}", json) {
-                Ok(_) => match self.writer.flush() {
-                    Ok(_) => Ok(()),
-                    Err(e) => {
-                        let error = MCPError::Transport(format!("Failed to flush: {}", e));
-                        self.handle_error(&error);
-                        Err(error)
-                    }
-                },
-                Err(e) => {
-                    let error = MCPError::Transport(format!("Failed to write: {}", e));
-                    self.handle_error(&error);
-                    Err(error)
-                }
-            }
-        }
-
-        fn receive<T: DeserializeOwned>(&mut self) -> Result<T, MCPError> {
-            if !self.is_connected {
-                let error = MCPError::Transport("Transport not connected".to_string());
-                self.handle_error(&error);
-                return Err(error);
-            }
-
-            let mut line = String::new();
-            match self.reader.read_line(&mut line) {
-                Ok(_) => {
-                    if let Some(callback) = &self.on_message {
-                        callback(&line);
-                    }
-
-                    match serde_json::from_str(&line) {
-                        Ok(parsed) => Ok(parsed),
-                        Err(e) => {
-                            let error = MCPError::Serialization(e);
-                            self.handle_error(&error);
-                            Err(error)
-                        }
-                    }
-                }
-                Err(e) => {
-                    let error = MCPError::Transport(format!("Failed to read: {}", e));
-                    self.handle_error(&error);
-                    Err(error)
-                }
-            }
-        }
-
-        fn close(&mut self) -> Result<(), MCPError> {
-            if !self.is_connected {
-                return Ok(());
-            }
-
-            self.is_connected = false;
-
-            if let Some(callback) = &self.on_close {
-                callback();
-            }
-
-            Ok(())
-        }
-
-        fn set_on_close(&mut self, callback: Option<CloseCallback>) {
-            self.on_close = callback;
-        }
-
-        fn set_on_error(&mut self, callback: Option<ErrorCallback>) {
-            self.on_error = callback;
-        }
-
-        fn set_on_message<F>(&mut self, callback: Option<F>)
-        where
-            F: Fn(&str) + Send + Sync + 'static,
-        {
-            self.on_message = callback.map(|f| Box::new(f) as Box<dyn Fn(&str) + Send + Sync>);
-        }
-    }
-}
+pub mod stdio;
 
 /// Server-Sent Events (SSE) transport
 pub mod sse;

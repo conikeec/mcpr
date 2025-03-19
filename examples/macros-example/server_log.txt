@@ -1,0 +1,4 @@
+[2025-03-19T00:49:15Z INFO  mcpr_example_server] Starting MCPR Example Server
+[2025-03-19T00:49:15Z INFO  mcpr_example_server] Starting server...
+[2025-03-19T00:49:15Z INFO  mcpr_example_server] Server started successfully
+[2025-03-19T00:49:15Z INFO  mcpr_example_server] Server shutdown complete

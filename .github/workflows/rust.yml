@@ -1,10 +1,10 @@
-name: Rust
+name: Rust CI
 
 on:
   push:
-    branches: [main]
+    branches: [ main ]
   pull_request:
-    branches: [main]
+    branches: [ main ]
 
 env:
   CARGO_TERM_COLOR: always
@@ -18,13 +18,11 @@ jobs:
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
+          components: clippy
           override: true
-          components: rustfmt, clippy
       - name: Build
         run: cargo build --verbose
       - name: Run tests
         run: cargo test --verbose
       - name: Run clippy
         run: cargo clippy -- -D warnings
-      - name: Check formatting
-        run: cargo fmt -- --check

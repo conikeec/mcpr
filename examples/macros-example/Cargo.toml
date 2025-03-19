@@ -1,0 +1,24 @@
+[package]
+name = "mcpr-examples-macros"
+version = "0.1.0"
+edition = "2021"
+description = "MCP examples using macros"
+authors = ["MCPR Development Team"]
+publish = false
+
+# Add a binary section to make the package buildable
+[[bin]]
+name = "mcpr-examples-macros"
+path = "src/main.rs"
+
+[dependencies]
+mcpr = { path = "../..", features = ["macros"] }
+mcpr-macros = { path = "../../mcpr-macros" }
+
+# These are internal workspace members
+# They don't need to be in a separate workspace as they're already in the main workspace
+[dependencies.mcpr-example-server]
+path = "server"
+
+[dependencies.mcpr-example-client]
+path = "client"

@@ -1,6 +1,15 @@
 //! MCP CLI tool for generating server and client stubs
 
 use clap::{Parser, Subcommand};
+use log::{debug, error, info};
+use mcpr::{
+    error::MCPError,
+    transport::{stdio::StdioTransport, CloseCallback, ErrorCallback, MessageCallback, Transport},
+};
+use serde::{de::DeserializeOwned, Serialize};
+use serde_json::Value;
+use std::collections::HashMap;
+use std::error::Error;
 use std::path::PathBuf;
 
 /// MCP CLI tool for generating server and client stubs

@@ -1,0 +1,15 @@
+[package]
+name = "mcpr-example-server"
+version = "0.1.0"
+edition = "2021"
+authors = ["MCPR Development Team"]
+description = "MCP Server example using MCPR macros"
+
+[dependencies]
+mcpr = { path = "../../..", features = ["macros"] }
+mcpr-macros = { path = "../../../mcpr-macros" }
+clap = { version = "4.4", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+log = "0.4"
+env_logger = "0.10"
