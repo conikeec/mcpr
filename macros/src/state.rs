@@ -385,6 +385,7 @@ pub fn impl_state_macro(_attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 /// Procedural macro for defining RBAC rules for methods
+#[allow(dead_code)]
 pub fn impl_rbac_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
     if let Ok(input) = syn::parse::<ItemFn>(item.clone()) {
         // Handle standalone function

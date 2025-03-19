@@ -6,6 +6,8 @@
 //! The following transport types are supported:
 //! - Stdio: Standard input/output for local processes
 //! - SSE: Server-Sent Events for server-to-client messages with HTTP POST for client-to-server
+//! - WebSocket: Bidirectional communication over WebSockets
+//! - TCP: Bidirectional communication over TCP sockets
 //!
 //! The following transport types are planned but not yet implemented:
 //! - WebSocket: Bidirectional communication over WebSockets (TBD)
@@ -100,5 +102,11 @@ pub mod stdio;
 
 /// Server-Sent Events (SSE) transport
 pub mod sse;
+
+/// WebSocket transport
+pub mod websocket;
+
+/// TCP transport
+pub mod tcp;
 
 // Note: WebSocket transport is planned but not yet implemented

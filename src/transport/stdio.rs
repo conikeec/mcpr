@@ -1,6 +1,5 @@
 use super::{CloseCallback, ErrorCallback, MessageCallback, Transport};
 use crate::error::MCPError;
-use serde::{de::DeserializeOwned, Serialize};
 use std::io;
 use std::io::{BufRead, BufReader, Write};
 

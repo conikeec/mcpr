@@ -1,5 +1,5 @@
 use crate::error::MCPError;
-use crate::schema::common::{Resource, ResourceContents, ResourceTemplate, TextResourceContents};
+use crate::schema::common::{Resource, ResourceContents, ResourceTemplate};
 use serde_json::Value;
 
 /// Trait for providing resources

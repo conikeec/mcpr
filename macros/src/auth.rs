@@ -153,6 +153,7 @@ fn generate_auth_methods_list(
 }
 
 /// Implementation of the auth attribute macro
+#[allow(dead_code)]
 pub fn auth_attr_macro(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // For now, just return the original implementation unchanged
     // The auth attribute will be processed by the mcp_auth macro

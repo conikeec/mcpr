@@ -1,7 +1,6 @@
 use proc_macro::TokenStream;
-use proc_macro2::Span;
 use quote::quote;
-use syn::{parse_macro_input, Data, DeriveInput, Fields, Ident, ItemFn, LitStr};
+use syn::{parse_macro_input, DeriveInput, ItemFn, LitStr};
 
 /// Implementation of the mcp_tools macro
 pub fn impl_tools_macro(_attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -85,6 +84,7 @@ pub fn tool_attr_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 /// Create a registry function for tools
+#[allow(dead_code)]
 pub fn impl_tools_registry(attr: TokenStream, item: TokenStream) -> TokenStream {
     // Ignore attributes for now
     let _attr = attr;
@@ -101,6 +101,7 @@ pub fn impl_tools_registry(attr: TokenStream, item: TokenStream) -> TokenStream 
 }
 
 /// Create a handler function for tool calls
+#[allow(dead_code)]
 pub fn impl_tools_handler(attr: TokenStream, item: TokenStream) -> TokenStream {
     // Ignore attributes for now
     let _attr = attr;

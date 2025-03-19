@@ -266,7 +266,7 @@ async fn post_message(
 async fn main() -> Result<(), Box<dyn Error>> {
     // Parse command line arguments
     let args = Args::parse();
-
+    
     // Initialize logging
     if args.debug {
         std::env::set_var("RUST_LOG", "debug,mcpr=debug");
@@ -619,7 +619,7 @@ async fn run_interactive_session(client: &MCPClientImpl) -> Result<(), Box<dyn E
 async fn main() -> Result<(), Box<dyn Error>> {
     // Parse command line arguments
     let args = Args::parse();
-
+    
     // Initialize logging
     if args.debug {
         std::env::set_var("RUST_LOG", "debug,mcpr=debug");

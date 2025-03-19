@@ -4,14 +4,12 @@ use crate::{
     constants::LATEST_PROTOCOL_VERSION,
     error::MCPError,
     schema::{
-        self,
-        client::{ClientCapabilities, InitializeParams},
-        common::{Implementation, Prompt, Resource, ResourceContents, Tool},
+        client::ClientCapabilities,
+        common::{Implementation, Prompt, Resource, ResourceContents},
         json_rpc::{JSONRPCMessage, JSONRPCRequest, RequestId},
     },
     transport::{Transport, TransportExt},
 };
-use log::{debug, trace};
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
 use std::time::Duration;
@@ -116,7 +114,7 @@ impl<T: Transport> Client<T> {
 
                 // Expose these tools in the special tool call
                 thread_local! {
-                    static INIT_TOOLS: std::cell::RefCell<Vec<crate::schema::common::Tool>> = std::cell::RefCell::new(Vec::new());
+                    static INIT_TOOLS: std::cell::RefCell<Vec<crate::schema::common::Tool>> = const { std::cell::RefCell::new(Vec::new()) };
                 }
 
                 INIT_TOOLS.with(|tools| {
@@ -143,7 +141,7 @@ impl<T: Transport> Client<T> {
         if tool_name == "__get_initialization_tools" {
             // Access the stored tools from initialization
             thread_local! {
-                static INIT_TOOLS: std::cell::RefCell<Vec<crate::schema::common::Tool>> = std::cell::RefCell::new(Vec::new());
+                static INIT_TOOLS: std::cell::RefCell<Vec<crate::schema::common::Tool>> = const { std::cell::RefCell::new(Vec::new()) };
             }
 
             let tools_list = INIT_TOOLS.with(|tools| tools.borrow().clone());

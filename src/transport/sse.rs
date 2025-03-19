@@ -2,7 +2,6 @@ use crate::error::MCPError;
 use crate::transport::{CloseCallback, ErrorCallback, MessageCallback, Transport};
 use log::{debug, error, info, warn};
 use reqwest::blocking::{Client, Response};
-use serde::{de::DeserializeOwned, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::thread;

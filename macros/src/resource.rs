@@ -1,12 +1,9 @@
 use proc_macro::TokenStream;
-use proc_macro2::Span;
 use quote::quote;
-use syn::{
-    parse_macro_input, Data, DeriveInput, Fields, FnArg, Ident, ImplItem, ImplItemFn, ItemFn,
-    ItemImpl, LitStr, Pat, PatIdent, PatType,
-};
+use syn::{parse_macro_input, DeriveInput, FnArg, ImplItemFn, ItemFn, Pat, PatIdent, PatType};
 
 /// Processes the resource attributes on methods
+#[allow(dead_code)]
 fn process_resource_attributes(method: &ImplItemFn) -> Option<proc_macro2::TokenStream> {
     for attr in &method.attrs {
         if attr.path().is_ident("resource") {
@@ -81,7 +78,7 @@ pub fn impl_resource_macro(_attr: TokenStream, item: TokenStream) -> TokenStream
 }
 
 /// Implementation of the resource attribute macro
-pub fn resource_attr_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn resource_attr_macro(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // Parse the function definition
     let input_fn = parse_macro_input!(item as ItemFn);
     let fn_name = &input_fn.sig.ident;

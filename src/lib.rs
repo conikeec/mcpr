@@ -1,5 +1,4 @@
-#[macro_use]
-extern crate serde;
+pub mod auth;
 
 // Define version constant
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -11,7 +10,6 @@ pub mod constants {
 }
 
 // Export all modules
-pub mod auth;
 pub mod client;
 pub mod error;
 pub mod macros;

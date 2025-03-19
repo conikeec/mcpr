@@ -1,12 +1,9 @@
 use proc_macro::TokenStream;
-use proc_macro2::Span;
 use quote::quote;
-use syn::{
-    parse_macro_input, Data, DeriveInput, Fields, FnArg, Ident, ImplItem, ImplItemFn, ItemFn,
-    ItemImpl, LitStr, Pat, PatIdent, PatType,
-};
+use syn::{parse_macro_input, DeriveInput, FnArg, ImplItemFn, ItemFn, Pat, PatIdent, PatType};
 
 /// Processes the prompt attributes on methods
+#[allow(dead_code)]
 fn process_prompt_attributes(method: &ImplItemFn) -> Option<proc_macro2::TokenStream> {
     for attr in &method.attrs {
         if attr.path().is_ident("prompt") {
@@ -75,7 +72,7 @@ pub fn impl_prompt_macro(_attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 /// Implementation of the prompt attribute macro
-pub fn prompt_attr_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn prompt_attr_macro(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // Parse the function definition
     let input_fn = parse_macro_input!(item as ItemFn);
     let fn_name = &input_fn.sig.ident;

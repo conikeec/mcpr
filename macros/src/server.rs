@@ -1,10 +1,10 @@
 use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::quote;
-use std::collections::HashMap;
-use syn::{parse_macro_input, Data, DeriveInput, Fields, Ident, ItemFn, LitStr};
+use syn::{parse_macro_input, DeriveInput, Ident, ItemFn, LitStr};
 
 /// Processes the tool attributes on methods
+#[allow(dead_code)]
 fn process_tool_attributes(method: &syn::ItemFn) -> Option<proc_macro2::TokenStream> {
     let has_tool_attr = method.attrs.iter().any(|attr| attr.path().is_ident("tool"));
 
@@ -455,18 +455,19 @@ pub fn impl_server_macro(_attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 /// Implementation of the tool attribute macro
+#[allow(dead_code)]
 pub fn tool_attr_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
     // Parse the attribute arguments (tool name)
     let tool_name = parse_macro_input!(attr as LitStr).value();
 
     // Parse the function definition
     let input_fn = parse_macro_input!(item as ItemFn);
-    let vis = &input_fn.vis;
+    let _vis = &input_fn.vis;
     let fn_name = &input_fn.sig.ident;
     let fn_name_str = fn_name.to_string();
-    let block = &input_fn.block;
-    let inputs = &input_fn.sig.inputs;
-    let output = &input_fn.sig.output;
+    let _block = &input_fn.block;
+    let _inputs = &input_fn.sig.inputs;
+    let _output = &input_fn.sig.output;
 
     // Create a unique struct name based on the function name
     let struct_name = Ident::new(&format!("{}ToolRegistration", fn_name), Span::call_site());

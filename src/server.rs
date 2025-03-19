@@ -3,8 +3,6 @@
 use crate::{
     constants::LATEST_PROTOCOL_VERSION,
     error::MCPError,
-    prompt::PromptProvider,
-    resource::ResourceProvider,
     schema::{
         common::Tool,
         json_rpc::{JSONRPCError, JSONRPCMessage, JSONRPCRequest, JSONRPCResponse, RequestId},
@@ -144,8 +142,8 @@ impl<T: Transport> Server<T> {
             match message {
                 JSONRPCMessage::Request(request) => {
                     let id = request.id.clone();
+                    let _params = request.params.clone();
                     let method = request.method.clone();
-                    let params = request.params.clone();
 
                     match method.as_str() {
                         "initialize" => {

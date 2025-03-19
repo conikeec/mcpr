@@ -197,7 +197,7 @@ impl MCPServerImpl {
 fn main() -> Result<(), Box<dyn Error>> {
     // Parse command line arguments
     let args = Args::parse();
-
+    
     // Initialize logging
     if args.debug {
         std::env::set_var("RUST_LOG", "debug,mcpr=debug");
@@ -431,7 +431,7 @@ fn run_interactive_session(client: &MCPClientImpl) -> Result<(), Box<dyn Error>>
                     parts[1].to_string()
                 } else {
                     print!("Enter name: ");
-                    io::stdout().flush()?;
+    io::stdout().flush()?;
                     lines.next().unwrap_or(Ok("World".to_string()))?
                 };
                 
@@ -480,7 +480,7 @@ fn run_interactive_session(client: &MCPClientImpl) -> Result<(), Box<dyn Error>>
 fn main() -> Result<(), Box<dyn Error>> {
     // Parse command line arguments
     let args = Args::parse();
-
+    
     // Initialize logging
     if args.debug {
         std::env::set_var("RUST_LOG", "debug,mcpr=debug");
