@@ -21,6 +21,12 @@ pub enum MCPError {
     // Transport connection errors
     AlreadyConnected,
     NotConnected,
+
+    // Timeout error
+    Timeout,
+
+    // Internal error
+    Internal(String),
 }
 
 // Custom implementation for Deserialize that doesn't require serde_json::Error to implement Default
@@ -42,6 +48,8 @@ impl<'de> Deserialize<'de> for MCPError {
             Transition,
             AlreadyConnected,
             NotConnected,
+            Timeout,
+            Internal,
         }
 
         #[derive(Deserialize)]
@@ -68,6 +76,8 @@ impl<'de> Deserialize<'de> for MCPError {
             Field::Transition => Ok(MCPError::Transition(helper.message.unwrap_or_default())),
             Field::AlreadyConnected => Ok(MCPError::AlreadyConnected),
             Field::NotConnected => Ok(MCPError::NotConnected),
+            Field::Timeout => Ok(MCPError::Timeout),
+            Field::Internal => Ok(MCPError::Internal(helper.message.unwrap_or_default())),
         }
     }
 }
@@ -87,6 +97,8 @@ impl fmt::Display for MCPError {
             MCPError::Transition(msg) => write!(f, "Transition error: {}", msg),
             MCPError::AlreadyConnected => write!(f, "Transport error: Already connected"),
             MCPError::NotConnected => write!(f, "Transport error: Not connected"),
+            MCPError::Timeout => write!(f, "Transport error: Operation timed out"),
+            MCPError::Internal(msg) => write!(f, "Internal error: {}", msg),
         }
     }
 }
@@ -97,5 +109,30 @@ impl std::error::Error for MCPError {}
 impl From<serde_json::Error> for MCPError {
     fn from(error: serde_json::Error) -> Self {
         MCPError::Serialization(error)
+    }
+}
+
+impl MCPError {
+    /// Check if an error is fatal and requires the connection to be terminated
+    pub fn is_fatal(&self) -> bool {
+        match self {
+            // These errors are considered fatal for a connection
+            MCPError::Transport(_) => true,
+            MCPError::Protocol(_) => true,
+            MCPError::NotConnected => true,
+            MCPError::Authentication(_) => true,
+            MCPError::Authorization(_) => true,
+
+            // These errors can be recovered from
+            MCPError::Serialization(_) => false,
+            MCPError::Deserialization(_) => false,
+            MCPError::NotFound(_) => false,
+            MCPError::InvalidRequest(_) => false,
+            MCPError::State(_) => false,
+            MCPError::Transition(_) => false,
+            MCPError::AlreadyConnected => false,
+            MCPError::Timeout => false,
+            MCPError::Internal(_) => false,
+        }
     }
 }

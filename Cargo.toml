@@ -24,7 +24,6 @@ include = [
 members = [
     "macros",
     "examples/macros-example",
-    # "mcpr-demo/server",  # Commented out as it doesn't exist
     # Add other workspace members as needed
 ]
 

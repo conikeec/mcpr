@@ -7,7 +7,6 @@
 //! - Stdio: Standard input/output for local processes
 //! - SSE: Server-Sent Events for server-to-client messages with HTTP POST for client-to-server
 //! - WebSocket: Bidirectional communication over WebSockets
-//! - TCP: Bidirectional communication over TCP sockets
 //!
 //! The following transport types are planned but not yet implemented:
 //! - WebSocket: Bidirectional communication over WebSockets (TBD)
@@ -44,8 +43,23 @@ pub trait Transport {
     /// Receive a message as a JSON string
     fn receive_json(&mut self) -> Result<String, MCPError>;
 
+    /// Receive a message as a JSON string with timeout
+    fn receive_json_with_timeout(
+        &mut self,
+        _timeout: std::time::Duration,
+    ) -> Result<String, MCPError> {
+        // Default implementation falls back to receive_json without timeout
+        self.receive_json()
+    }
+
     /// Close the connection
     fn close(&mut self) -> Result<(), MCPError>;
+
+    /// Gracefully shutdown the connection
+    fn shutdown(&mut self) -> Result<(), MCPError> {
+        // Default implementation falls back to close
+        self.close()
+    }
 
     /// Check if the transport is connected
     fn is_connected(&self) -> bool;
@@ -105,8 +119,5 @@ pub mod sse;
 
 /// WebSocket transport
 pub mod websocket;
-
-/// TCP transport
-pub mod tcp;
 
 // Note: WebSocket transport is planned but not yet implemented

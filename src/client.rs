@@ -23,7 +23,7 @@ pub struct Client<T: Transport> {
     capabilities: ClientCapabilities,
     client_info: Implementation,
     request_id: std::sync::atomic::AtomicUsize,
-    timeout: Duration,
+    _timeout: Duration,
 }
 
 impl<T: Transport> Client<T> {
@@ -43,7 +43,7 @@ impl<T: Transport> Client<T> {
                 version: env!("CARGO_PKG_VERSION").to_string(),
             },
             request_id: std::sync::atomic::AtomicUsize::new(1),
-            timeout: Duration::from_secs(30),
+            _timeout: Duration::from_secs(30),
         }
     }
 
@@ -53,7 +53,7 @@ impl<T: Transport> Client<T> {
         protocol_version: String,
         client_info: Implementation,
         capabilities: ClientCapabilities,
-        timeout: Duration,
+        _timeout: Duration,
     ) -> Self {
         Self {
             transport,
@@ -62,7 +62,7 @@ impl<T: Transport> Client<T> {
             capabilities,
             client_info,
             request_id: std::sync::atomic::AtomicUsize::new(1),
-            timeout,
+            _timeout,
         }
     }
 

@@ -241,7 +241,7 @@ impl<T: Transport> Server<T> {
     }
 
     /// Handle tool call request
-    fn handle_tool_call(&mut self, id: RequestId, params: Option<Value>) -> Result<(), MCPError> {
+    fn _handle_tool_call(&mut self, id: RequestId, params: Option<Value>) -> Result<(), MCPError> {
         let transport = self
             .transport
             .as_mut()
