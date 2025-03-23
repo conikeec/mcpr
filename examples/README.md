@@ -8,7 +8,7 @@ These examples demonstrate:
 
 - Creating servers that handle tool calls
 - Creating clients that connect to servers
-- Using different transport methods (stdio, WebSocket)
+- Using different transport methods (stdio, SSE)
 - Handling errors gracefully
 - Making concurrent tool calls
 
@@ -43,23 +43,41 @@ Usage:
 - Example: `echo {"message": "Hello, world!"}`
 - Type `exit` to quit
 
-### WebSocket Server
+### SSE Server Examples
 
-A server that listens for WebSocket connections on localhost:8080 and provides an echo tool.
+We provide several SSE transport server examples:
 
-To run:
+#### Basic SSE Server
+
+A server that listens for SSE (Server-Sent Events) connections and provides an echo tool:
 
 ```bash
-cargo run --example websocket_server
+cargo run --example sse_server
 ```
 
-This server runs until you press Ctrl+C to exit.
+#### MCP SSE Server
 
-### Concurrent Client (WebSocket)
+An example of an MCP server implementation using SSE transport with multiple tools:
 
-A client that demonstrates making multiple tool calls concurrently to a WebSocket server.
+```bash
+cargo run --example sse_mcp_server
+```
 
-To run (after starting the WebSocket server):
+#### SSE Server Mode
+
+A simpler SSE server implementation focusing on the server-side aspects:
+
+```bash
+cargo run --example sse_server_mode
+```
+
+All SSE servers run until you press Ctrl+C to exit.
+
+### Concurrent Client (SSE)
+
+A client that demonstrates making multiple tool calls concurrently to an SSE server.
+
+To run (after starting any of the SSE servers):
 
 ```bash
 cargo run --example concurrent_client
@@ -76,9 +94,9 @@ To test these examples, you can run them in pairs:
 1. Terminal 1: `cargo run --example echo_server`
 2. Terminal 2: `cargo run --example interactive_client`
 
-### Testing WebSocket transport:
+### Testing SSE transport:
 
-1. Terminal 1: `cargo run --example websocket_server`
+1. Terminal 1: `cargo run --example sse_server`
 2. Terminal 2: `cargo run --example concurrent_client`
 
 ## Notes
@@ -86,6 +104,6 @@ To test these examples, you can run them in pairs:
 - These examples use `env_logger` for logging. Set the `RUST_LOG` environment variable to control log levels.
   Example: `RUST_LOG=info cargo run --example echo_server`
 
-- The WebSocket examples require a network connection, but only communicate locally (127.0.0.1).
+- The SSE examples require a network connection, but only communicate locally (127.0.0.1).
 
 - Error handling is demonstrated in all examples, showing how to properly propagate and handle errors in an async context.

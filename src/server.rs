@@ -14,7 +14,7 @@
 //!     error::MCPError,
 //!     server::{Server, ServerConfig},
 //!     transport::stdio::StdioTransport,
-//!     Tool,
+//!     schema::common::Tool,
 //! };
 //! use serde_json::Value;
 //!
@@ -75,19 +75,19 @@ use crate::{
     constants::LATEST_PROTOCOL_VERSION,
     error::MCPError,
     schema::{
-        client::{CallToolParams, ListToolsResult},
-        common::{Implementation, Tool},
+        client::{CallToolParams, ListPromptsResult, ListResourcesResult, ListToolsResult},
+        common::{Implementation, Prompt, Resource, Tool},
         json_rpc::{JSONRPCMessage, JSONRPCResponse, RequestId},
         server::{
-            CallToolResult, InitializeResult, ServerCapabilities, ToolResultContent,
-            ToolsCapability,
+            CallToolResult, InitializeResult, PromptsCapability, ResourcesCapability,
+            ServerCapabilities, ToolResultContent, ToolsCapability,
         },
     },
     transport::Transport,
 };
 use futures::future::join_all;
-use log::{error, info};
-use serde_json::Value;
+use log::{debug, error, info};
+use serde_json::{json, Value};
 use std::{collections::HashMap, future::Future, pin::Pin, sync::Arc, time::Duration};
 use tokio::{sync::Mutex, time::timeout};
 
@@ -100,6 +100,10 @@ pub struct ServerConfig {
     pub version: String,
     /// Available tools
     pub tools: Vec<Tool>,
+    /// Available prompts
+    pub prompts: Vec<Prompt>,
+    /// Available resources
+    pub resources: Vec<Resource>,
     /// Timeout for operations (in milliseconds)
     pub timeout: Option<Duration>,
 }
@@ -111,6 +115,8 @@ impl ServerConfig {
             name: "MCP Server".to_string(),
             version: "1.0.0".to_string(),
             tools: Vec::new(),
+            prompts: Vec::new(),
+            resources: Vec::new(),
             timeout: None,
         }
     }
@@ -130,6 +136,18 @@ impl ServerConfig {
     /// Add a tool to the server
     pub fn with_tool(mut self, tool: Tool) -> Self {
         self.tools.push(tool);
+        self
+    }
+
+    /// Add a prompt to the server
+    pub fn with_prompt(mut self, prompt: Prompt) -> Self {
+        self.prompts.push(prompt);
+        self
+    }
+
+    /// Add a resource to the server
+    pub fn with_resource(mut self, resource: Resource) -> Self {
+        self.resources.push(resource);
         self
     }
 
@@ -223,6 +241,32 @@ impl<T: Transport + Send + Sync + Clone + 'static> Server<T> {
         self.process_messages().await
     }
 
+    /// Start the server with the given transport in the background
+    /// Returns immediately without blocking the caller
+    pub async fn start_background(&mut self, mut transport: T) -> Result<(), MCPError> {
+        // Start the transport
+        transport.start().await?;
+
+        // Clone the server for the background task
+        let mut server_clone = self.clone();
+
+        // Store the transport in both instances
+        self.transport = Some(transport.clone());
+        server_clone.transport = Some(transport);
+
+        // Spawn a background task to run the message processing loop
+        tokio::spawn(async move {
+            if let Err(e) = server_clone.process_messages().await {
+                error!("Error in server background task: {}", e);
+            }
+        });
+
+        // Return immediately
+        info!("Server started in background mode");
+
+        Ok(())
+    }
+
     /// Process incoming messages
     async fn process_messages(&mut self) -> Result<(), MCPError> {
         loop {
@@ -304,6 +348,48 @@ impl<T: Transport + Send + Sync + Clone + 'static> Server<T> {
                                 }
                             });
                         }
+                        "tool_call" => {
+                            // Legacy method for backward compatibility
+                            info!("Received legacy tool_call request (redirecting to tools/call)");
+                            // Process tools/call requests in a new task
+                            let tools_call_task = self.clone_for_tools_call();
+                            let id_clone = id.clone();
+                            let params_clone = params.clone();
+
+                            // Spawn a new task to handle the tool call concurrently
+                            tokio::spawn(async move {
+                                if let Err(e) = tools_call_task
+                                    .handle_tools_call(id_clone, params_clone)
+                                    .await
+                                {
+                                    error!("Error handling tool_call request: {}", e);
+                                }
+                            });
+                        }
+                        "prompts/list" => {
+                            info!("Received prompts list request");
+                            if let Err(e) = self.handle_prompts_list(id, params).await {
+                                error!("Error handling prompts/list request: {}", e);
+                            }
+                        }
+                        "resources/list" => {
+                            info!("Received resources list request");
+                            if let Err(e) = self.handle_resources_list(id, params).await {
+                                error!("Error handling resources/list request: {}", e);
+                            }
+                        }
+                        "ping" => {
+                            debug!("Received ping request");
+                            if let Err(e) = self.handle_ping(id).await {
+                                error!("Error handling ping request: {}", e);
+                            }
+                        }
+                        "$/cancelRequest" => {
+                            debug!("Received cancel request");
+                            if let Err(e) = self.handle_cancel_request(id, params).await {
+                                error!("Error handling cancel request: {}", e);
+                            }
+                        }
                         "shutdown" => {
                             info!("Received shutdown request");
                             if let Err(e) = self.handle_shutdown(id).await {
@@ -327,6 +413,20 @@ impl<T: Transport + Send + Sync + Clone + 'static> Server<T> {
                             {
                                 error!("Error sending error response: {}", e);
                             }
+                        }
+                    }
+                }
+                JSONRPCMessage::Notification(notification) => {
+                    let method = notification.method.clone();
+
+                    match method.as_str() {
+                        "initialized" => {
+                            info!("Received 'initialized' notification - client is ready");
+                            // The initialized notification doesn't require a response
+                            // Just acknowledge receipt and continue processing
+                        }
+                        _ => {
+                            debug!("Received unknown notification: {}", method);
                         }
                     }
                 }
@@ -371,8 +471,21 @@ impl<T: Transport + Send + Sync + Clone + 'static> Server<T> {
         let capabilities = ServerCapabilities {
             experimental: None,
             logging: None,
-            prompts: None,
-            resources: None,
+            prompts: if !self.config.prompts.is_empty() {
+                Some(PromptsCapability {
+                    list_changed: Some(false),
+                })
+            } else {
+                None
+            },
+            resources: if !self.config.resources.is_empty() {
+                Some(ResourcesCapability {
+                    list_changed: Some(false),
+                    subscribe: Some(false),
+                })
+            } else {
+                None
+            },
             tools: if !self.config.tools.is_empty() {
                 Some(ToolsCapability {
                     list_changed: Some(false),
@@ -399,7 +512,8 @@ impl<T: Transport + Send + Sync + Clone + 'static> Server<T> {
         // Create response with proper result
         let response = JSONRPCResponse::new(
             id,
-            serde_json::to_value(init_result).map_err(MCPError::Serialization)?,
+            serde_json::to_value(init_result)
+                .map_err(|e| MCPError::Serialization(e.to_string()))?,
         );
 
         // Send the response
@@ -428,7 +542,67 @@ impl<T: Transport + Send + Sync + Clone + 'static> Server<T> {
         // Create response with proper result
         let response = JSONRPCResponse::new(
             id,
-            serde_json::to_value(tools_list).map_err(MCPError::Serialization)?,
+            serde_json::to_value(tools_list).map_err(|e| MCPError::Serialization(e.to_string()))?,
+        );
+
+        // Send the response
+        transport.send(&JSONRPCMessage::Response(response)).await?;
+
+        Ok(())
+    }
+
+    /// Handle prompts list request
+    async fn handle_prompts_list(
+        &mut self,
+        id: RequestId,
+        _params: Option<Value>,
+    ) -> Result<(), MCPError> {
+        let transport = self
+            .transport
+            .as_mut()
+            .ok_or_else(|| MCPError::Protocol("Transport not initialized".to_string()))?;
+
+        // Create prompts list result
+        let prompts_list = ListPromptsResult {
+            next_cursor: None, // No pagination in this implementation
+            prompts: self.config.prompts.clone(),
+        };
+
+        // Create response with proper result
+        let response = JSONRPCResponse::new(
+            id,
+            serde_json::to_value(prompts_list)
+                .map_err(|e| MCPError::Serialization(e.to_string()))?,
+        );
+
+        // Send the response
+        transport.send(&JSONRPCMessage::Response(response)).await?;
+
+        Ok(())
+    }
+
+    /// Handle resources list request
+    async fn handle_resources_list(
+        &mut self,
+        id: RequestId,
+        _params: Option<Value>,
+    ) -> Result<(), MCPError> {
+        let transport = self
+            .transport
+            .as_mut()
+            .ok_or_else(|| MCPError::Protocol("Transport not initialized".to_string()))?;
+
+        // Create resources list result
+        let resources_list = ListResourcesResult {
+            next_cursor: None, // No pagination in this implementation
+            resources: self.config.resources.clone(),
+        };
+
+        // Create response with proper result
+        let response = JSONRPCResponse::new(
+            id,
+            serde_json::to_value(resources_list)
+                .map_err(|e| MCPError::Serialization(e.to_string()))?,
         );
 
         // Send the response
@@ -449,6 +623,56 @@ impl<T: Transport + Send + Sync + Clone + 'static> Server<T> {
 
         // Send the response
         transport.send(&JSONRPCMessage::Response(response)).await?;
+
+        Ok(())
+    }
+
+    /// Handle cancel request
+    async fn handle_cancel_request(
+        &mut self,
+        id: RequestId,
+        params: Option<Value>,
+    ) -> Result<(), MCPError> {
+        let transport = self
+            .transport
+            .as_mut()
+            .ok_or_else(|| MCPError::Protocol("Transport not initialized".to_string()))?;
+
+        // Extract the ID of the request to cancel
+        if let Some(params) = params {
+            if let Some(request_id) = params.get("id") {
+                debug!("Request to cancel operation with ID: {:?}", request_id);
+
+                // In a real implementation, you would use the request_id to find and cancel
+                // the corresponding in-progress operation
+                // For now, we'll just acknowledge the cancellation
+
+                // Send a success response
+                let response = json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": null
+                });
+
+                transport.send(&response).await?;
+                info!("Acknowledged cancellation request for ID: {:?}", request_id);
+            } else {
+                // Missing required parameter
+                return self
+                    .send_error(
+                        id,
+                        -32602,
+                        "Missing required parameter 'id'".to_string(),
+                        None,
+                    )
+                    .await;
+            }
+        } else {
+            // Missing parameters
+            return self
+                .send_error(id, -32602, "Missing required parameters".to_string(), None)
+                .await;
+        }
 
         Ok(())
     }
@@ -507,6 +731,26 @@ impl<T: Transport + Send + Sync + Clone + 'static> Server<T> {
 
         join_all(futures).await
     }
+
+    /// Handle ping request
+    async fn handle_ping(&mut self, id: RequestId) -> Result<(), MCPError> {
+        let transport = self
+            .transport
+            .as_mut()
+            .ok_or_else(|| MCPError::Protocol("Transport not initialized".to_string()))?;
+
+        // Send a simple response for the ping
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": {}
+        });
+
+        transport.send(&response).await?;
+        debug!("Sent ping response");
+
+        Ok(())
+    }
 }
 
 /// Handler struct for concurrent tool call processing
@@ -535,18 +779,55 @@ where
             MCPError::Protocol("Missing parameters in tools/call request".to_string())
         })?;
 
-        // Parse the parameters as CallToolParams
-        let call_params: CallToolParams = serde_json::from_value(params.clone())
-            .map_err(|e| MCPError::Protocol(format!("Invalid tools/call parameters: {}", e)))?;
+        // Get the tool name - support both standard MCP ('name' with 'arguments') and our custom format
+        let (tool_name, tool_params) = if let Some(name) = params.get("name") {
+            let name_str = name
+                .as_str()
+                .ok_or_else(|| MCPError::Protocol("Tool name must be a string".to_string()))?;
 
-        // Get the tool name and arguments
-        let tool_name = call_params.name.clone();
+            // Check for 'arguments' (MCP standard) or fall back to 'parameters' (our custom format)
+            let params_value = if params.get("arguments").is_some() {
+                // MCP standard format: use 'arguments'
+                match params.get("arguments") {
+                    Some(args) => args.clone(),
+                    None => Value::Null,
+                }
+            } else if params.get("parameters").is_some() {
+                // Our custom format: use 'parameters'
+                match params.get("parameters") {
+                    Some(args) => args.clone(),
+                    None => Value::Null,
+                }
+            } else {
+                // No parameters found
+                Value::Null
+            };
 
-        // Convert arguments to JSON Value if they exist, otherwise use null
-        let tool_params = match call_params.arguments {
-            Some(args) => serde_json::to_value(args).unwrap_or(Value::Null),
-            None => Value::Null,
+            (name_str.to_string(), params_value)
+        } else {
+            // Backward compatibility - try to parse as CallToolParams for direct compatibility
+            match serde_json::from_value::<CallToolParams>(params.clone()) {
+                Ok(call_params) => {
+                    let tool_name = call_params.name.clone();
+                    let tool_params = match call_params.arguments {
+                        Some(args) => serde_json::to_value(args).unwrap_or(Value::Null),
+                        None => Value::Null,
+                    };
+                    (tool_name, tool_params)
+                }
+                Err(e) => {
+                    return Err(MCPError::Protocol(format!(
+                        "Invalid tool call parameters: {}",
+                        e
+                    )));
+                }
+            }
         };
+
+        debug!(
+            "Executing tool {} with params: {:?}",
+            tool_name, tool_params
+        );
 
         // Run the tool handler
         let result = self.execute_tool(&tool_name, tool_params).await;
@@ -570,7 +851,8 @@ where
                 // Create response
                 let response = JSONRPCResponse::new(
                     id,
-                    serde_json::to_value(tool_result).map_err(MCPError::Serialization)?,
+                    serde_json::to_value(tool_result)
+                        .map_err(|e| MCPError::Serialization(e.to_string()))?,
                 );
 
                 // Send the response
@@ -638,6 +920,7 @@ mod tests {
         schema::{
             common::ToolInputSchema,
             json_rpc::{JSONRPCMessage, JSONRPCRequest},
+            PromptArgument,
         },
         transport::Transport,
     };
@@ -687,8 +970,8 @@ mod tests {
         }
 
         async fn send<T: Serialize + Send + Sync>(&mut self, message: &T) -> Result<(), MCPError> {
-            let serialized =
-                serde_json::to_string(message).map_err(|e| MCPError::Serialization(e))?;
+            let serialized = serde_json::to_string(message)
+                .map_err(|e| MCPError::Serialization(e.to_string()))?;
 
             let mut queue = self.send_queue.lock().await;
             queue.push_back(serialized);
@@ -699,7 +982,7 @@ mod tests {
             let mut queue = self.receive_queue.lock().await;
 
             if let Some(message) = queue.pop_front() {
-                serde_json::from_str(&message).map_err(|e| MCPError::Serialization(e))
+                serde_json::from_str(&message).map_err(|e| MCPError::Serialization(e.to_string()))
             } else {
                 // In a real implementation, this would block until a message is received
                 // For testing, we'll just simulate a timeout/error
@@ -729,50 +1012,28 @@ mod tests {
         }
     }
 
-    // Helper to run a test with a server
-    async fn with_test_server<F, Fut>(test: F) -> Result<(), MCPError>
+    // Helper to run a test with a server with custom configuration
+    async fn with_test_server_config<F, Fut>(config: ServerConfig, test: F) -> Result<(), MCPError>
     where
         F: FnOnce(Server<MockTransport>, MockTransport) -> Fut,
         Fut: Future<Output = Result<(), MCPError>>,
     {
-        // Create server config
-        let config = ServerConfig::new()
-            .with_name("TestServer")
-            .with_version("1.0.0")
-            .with_tool(Tool {
-                name: "echo".to_string(),
-                description: Some("Echo tool".to_string()),
-                input_schema: ToolInputSchema {
-                    r#type: "object".to_string(),
-                    properties: Some(
-                        [(
-                            "message".to_string(),
-                            serde_json::json!({
-                                "type": "string",
-                                "description": "Message to echo"
-                            }),
-                        )]
-                        .into_iter()
-                        .collect(),
-                    ),
-                    required: Some(vec!["message".to_string()]),
-                },
-            });
-
-        // Create server
+        // Create server with provided config
         let mut server = Server::new(config);
 
         // Register handlers
-        server.register_tool_handler("echo", |params: Value| async move {
-            let message = params
-                .get("message")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| MCPError::Protocol("Missing message parameter".to_string()))?;
+        if !server.config.tools.is_empty() {
+            server.register_tool_handler("echo", |params: Value| async move {
+                let message = params
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| MCPError::Protocol("Missing message parameter".to_string()))?;
 
-            Ok(serde_json::json!({
-                "result": message
-            }))
-        })?;
+                Ok(serde_json::json!({
+                    "result": message
+                }))
+            })?;
+        }
 
         // Create mock transport
         let transport = MockTransport::new();
@@ -811,6 +1072,39 @@ mod tests {
         test_result
     }
 
+    // Helper to run a test with a default server configuration
+    async fn with_test_server<F, Fut>(test: F) -> Result<(), MCPError>
+    where
+        F: FnOnce(Server<MockTransport>, MockTransport) -> Fut,
+        Fut: Future<Output = Result<(), MCPError>>,
+    {
+        // Create server config
+        let config = ServerConfig::new()
+            .with_name("TestServer")
+            .with_version("1.0.0")
+            .with_tool(Tool {
+                name: "echo".to_string(),
+                description: Some("Echo tool".to_string()),
+                input_schema: ToolInputSchema {
+                    r#type: "object".to_string(),
+                    properties: Some(
+                        [(
+                            "message".to_string(),
+                            serde_json::json!({
+                                "type": "string",
+                                "description": "Message to echo"
+                            }),
+                        )]
+                        .into_iter()
+                        .collect(),
+                    ),
+                    required: Some(vec!["message".to_string()]),
+                },
+            });
+
+        with_test_server_config(config, test).await
+    }
+
     #[tokio::test]
     async fn test_server_initialization() -> Result<(), MCPError> {
         with_test_server(|_server, transport| async move {
@@ -835,8 +1129,8 @@ mod tests {
                 .ok_or_else(|| MCPError::Protocol("No response received".to_string()))?;
 
             // Parse response and verify it contains expected data
-            let parsed: JSONRPCMessage =
-                serde_json::from_str(&response).map_err(|e| MCPError::Serialization(e))?;
+            let parsed: JSONRPCMessage = serde_json::from_str(&response)
+                .map_err(|e| MCPError::Serialization(e.to_string()))?;
 
             match parsed {
                 JSONRPCMessage::Response(resp) => {
@@ -939,8 +1233,8 @@ mod tests {
                 .ok_or_else(|| MCPError::Protocol("No response received".to_string()))?;
 
             // Parse response and verify it contains expected data
-            let parsed: JSONRPCMessage =
-                serde_json::from_str(&response).map_err(|e| MCPError::Serialization(e))?;
+            let parsed: JSONRPCMessage = serde_json::from_str(&response)
+                .map_err(|e| MCPError::Serialization(e.to_string()))?;
 
             match parsed {
                 JSONRPCMessage::Response(resp) => {
@@ -1016,8 +1310,8 @@ mod tests {
                 .ok_or_else(|| MCPError::Protocol("No response received".to_string()))?;
 
             // Parse response and verify it contains expected data
-            let parsed: JSONRPCMessage =
-                serde_json::from_str(&response).map_err(|e| MCPError::Serialization(e))?;
+            let parsed: JSONRPCMessage = serde_json::from_str(&response)
+                .map_err(|e| MCPError::Serialization(e.to_string()))?;
 
             match parsed {
                 JSONRPCMessage::Response(resp) => {
@@ -1095,6 +1389,290 @@ mod tests {
             }
 
             Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_ping() -> Result<(), MCPError> {
+        with_test_server(|_server, transport| async move {
+            // Queue initialization request first (server needs to be initialized)
+            transport
+                .queue_message(JSONRPCMessage::Request(JSONRPCRequest::new(
+                    RequestId::Number(1),
+                    "initialize".to_string(),
+                    Some(serde_json::json!({
+                        "protocol_version": LATEST_PROTOCOL_VERSION
+                    })),
+                )))
+                .await;
+
+            // Wait for initialization to process
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+            // Discard initialization response
+            let _ = transport.get_last_sent().await;
+
+            // Queue ping request
+            transport
+                .queue_message(JSONRPCMessage::Request(JSONRPCRequest::new(
+                    RequestId::Number(2),
+                    "ping".to_string(),
+                    None,
+                )))
+                .await;
+
+            // Give server time to process
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+            // Check response
+            let response = transport
+                .get_last_sent()
+                .await
+                .ok_or_else(|| MCPError::Protocol("No response received".to_string()))?;
+
+            // Parse response and verify it contains expected data
+            let parsed: JSONRPCMessage = serde_json::from_str(&response)
+                .map_err(|e| MCPError::Serialization(e.to_string()))?;
+
+            match parsed {
+                JSONRPCMessage::Response(resp) => {
+                    // Verify the response has the correct ID
+                    assert_eq!(resp.id, RequestId::Number(2));
+
+                    // Verify the result is an empty object
+                    assert!(resp.result.is_object(), "Result should be an object");
+                    assert_eq!(
+                        resp.result.as_object().unwrap().len(),
+                        0,
+                        "Result should be an empty object"
+                    );
+
+                    Ok(())
+                }
+                _ => Err(MCPError::Protocol("Expected response message".to_string())),
+            }
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_cancel_request() -> Result<(), MCPError> {
+        with_test_server(|_server, transport| async move {
+            // Queue initialization request first (server needs to be initialized)
+            transport
+                .queue_message(JSONRPCMessage::Request(JSONRPCRequest::new(
+                    RequestId::Number(1),
+                    "initialize".to_string(),
+                    Some(serde_json::json!({
+                        "protocol_version": LATEST_PROTOCOL_VERSION
+                    })),
+                )))
+                .await;
+
+            // Wait for initialization to process
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+            // Discard initialization response
+            let _ = transport.get_last_sent().await;
+
+            // Queue cancel request
+            let request_id_to_cancel = RequestId::Number(999); // ID of the request to cancel
+            transport
+                .queue_message(JSONRPCMessage::Request(JSONRPCRequest::new(
+                    RequestId::Number(2),
+                    "$/cancelRequest".to_string(),
+                    Some(serde_json::json!({
+                        "id": request_id_to_cancel
+                    })),
+                )))
+                .await;
+
+            // Give server time to process
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+            // Check response
+            let response = transport
+                .get_last_sent()
+                .await
+                .ok_or_else(|| MCPError::Protocol("No response received".to_string()))?;
+
+            // Parse response and verify it contains expected data
+            let parsed: JSONRPCMessage = serde_json::from_str(&response)
+                .map_err(|e| MCPError::Serialization(e.to_string()))?;
+
+            match parsed {
+                JSONRPCMessage::Response(resp) => {
+                    // Verify the response has the correct ID
+                    assert_eq!(resp.id, RequestId::Number(2));
+
+                    // Verify the result is null, indicating success
+                    assert!(resp.result.is_null(), "Result should be null");
+
+                    Ok(())
+                }
+                _ => Err(MCPError::Protocol("Expected response message".to_string())),
+            }
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_prompts_list() -> Result<(), MCPError> {
+        // Create a config with a test prompt
+        let config = ServerConfig::new()
+            .with_name("TestServer")
+            .with_version("1.0.0")
+            .with_prompt(Prompt {
+                name: "test_prompt".to_string(),
+                description: Some("A test prompt".to_string()),
+                arguments: Some(vec![PromptArgument {
+                    name: "param1".to_string(),
+                    description: Some("Test parameter".to_string()),
+                    required: Some(true),
+                }]),
+            });
+
+        with_test_server_config(config, |_server, transport| async move {
+            // Queue initialization request first (server needs to be initialized)
+            transport
+                .queue_message(JSONRPCMessage::Request(JSONRPCRequest::new(
+                    RequestId::Number(1),
+                    "initialize".to_string(),
+                    Some(serde_json::json!({
+                        "protocol_version": LATEST_PROTOCOL_VERSION
+                    })),
+                )))
+                .await;
+
+            // Wait for initialization to process
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+            // Discard initialization response
+            let _ = transport.get_last_sent().await;
+
+            // Queue prompts/list request
+            transport
+                .queue_message(JSONRPCMessage::Request(JSONRPCRequest::new(
+                    RequestId::Number(2),
+                    "prompts/list".to_string(),
+                    None,
+                )))
+                .await;
+
+            // Wait for prompts/list to process
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+            // Check the response for prompts/list
+            match transport.get_last_sent().await {
+                Some(msg) => {
+                    let parsed: JSONRPCMessage = serde_json::from_str(&msg)?;
+
+                    if let JSONRPCMessage::Response(resp) = parsed {
+                        assert_eq!(resp.id, RequestId::Number(2));
+
+                        // Parse the result field as ListPromptsResult
+                        let result: ListPromptsResult = serde_json::from_value(resp.result)?;
+
+                        assert_eq!(result.prompts.len(), 1);
+                        assert_eq!(result.prompts[0].name, "test_prompt");
+                        assert_eq!(
+                            result.prompts[0].description,
+                            Some("A test prompt".to_string())
+                        );
+                        assert!(result.prompts[0].arguments.is_some());
+                        assert_eq!(result.prompts[0].arguments.as_ref().unwrap().len(), 1);
+                        assert_eq!(
+                            result.prompts[0].arguments.as_ref().unwrap()[0].name,
+                            "param1"
+                        );
+
+                        Ok(())
+                    } else {
+                        Err(MCPError::Protocol("Expected response message".to_string()))
+                    }
+                }
+                _ => Err(MCPError::Protocol("No response received".to_string())),
+            }
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_resources_list() -> Result<(), MCPError> {
+        // Create a config with a test resource
+        let config = ServerConfig::new()
+            .with_name("TestServer")
+            .with_version("1.0.0")
+            .with_resource(Resource {
+                uri: "file:///test/resource.txt".to_string(),
+                name: "test_resource".to_string(),
+                description: Some("A test resource".to_string()),
+                mime_type: Some("text/plain".to_string()),
+                size: Some(42),
+                annotations: None,
+            });
+
+        with_test_server_config(config, |_server, transport| async move {
+            // Queue initialization request first (server needs to be initialized)
+            transport
+                .queue_message(JSONRPCMessage::Request(JSONRPCRequest::new(
+                    RequestId::Number(1),
+                    "initialize".to_string(),
+                    Some(serde_json::json!({
+                        "protocol_version": LATEST_PROTOCOL_VERSION
+                    })),
+                )))
+                .await;
+
+            // Wait for initialization to process
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+            // Discard initialization response
+            let _ = transport.get_last_sent().await;
+
+            // Queue resources/list request
+            transport
+                .queue_message(JSONRPCMessage::Request(JSONRPCRequest::new(
+                    RequestId::Number(2),
+                    "resources/list".to_string(),
+                    None,
+                )))
+                .await;
+
+            // Wait for resources/list to process
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+            // Check the response for resources/list
+            match transport.get_last_sent().await {
+                Some(msg) => {
+                    let parsed: JSONRPCMessage = serde_json::from_str(&msg)?;
+
+                    if let JSONRPCMessage::Response(resp) = parsed {
+                        assert_eq!(resp.id, RequestId::Number(2));
+
+                        // Parse the result field as ListResourcesResult
+                        let result: ListResourcesResult = serde_json::from_value(resp.result)?;
+
+                        assert_eq!(result.resources.len(), 1);
+                        assert_eq!(result.resources[0].name, "test_resource");
+                        assert_eq!(
+                            result.resources[0].description,
+                            Some("A test resource".to_string())
+                        );
+                        assert_eq!(result.resources[0].uri, "file:///test/resource.txt");
+                        assert_eq!(
+                            result.resources[0].mime_type,
+                            Some("text/plain".to_string())
+                        );
+
+                        Ok(())
+                    } else {
+                        Err(MCPError::Protocol("Expected response message".to_string()))
+                    }
+                }
+                _ => Err(MCPError::Protocol("No response received".to_string())),
+            }
         })
         .await
     }

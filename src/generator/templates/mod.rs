@@ -13,17 +13,41 @@ pub use sse::{
     PROJECT_TEST_SCRIPT_TEMPLATE as SSE_TEST_SCRIPT_TEMPLATE,
 };
 
+// TODO: Remove this comment after confirming everything works
+// The SSE client templates are now imported from sse.rs module
+
 pub use stdio::{
     PROJECT_CLIENT_CARGO_TEMPLATE as STDIO_CLIENT_CARGO_TEMPLATE,
     PROJECT_CLIENT_TEMPLATE as STDIO_CLIENT_TEMPLATE,
-    PROJECT_SERVER_CARGO_TEMPLATE as STDIO_SERVER_CARGO_TEMPLATE,
     PROJECT_SERVER_TEMPLATE as STDIO_SERVER_TEMPLATE,
     PROJECT_TEST_SCRIPT_TEMPLATE as STDIO_TEST_SCRIPT_TEMPLATE,
 };
 
+/// Template for stdio server Cargo.toml
+pub const STDIO_SERVER_CARGO_TEMPLATE: &str = r#"[package]
+name = "{{name}}-server"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+# For local development, use path dependency:
+# mcpr = { path = "../.." }
+# For production, use version from crates.io:
+mcpr = "0.2.3"
+clap = { version = "4.0", features = ["derive"] }
+serde = "1.0"
+serde_json = "1.0"
+env_logger = "0.10"
+log = "0.4"
+anyhow = "1.0"
+thiserror = "1.0"
+tokio = { version = "1", features = ["full"] }
+"#;
+
 // WebSocket templates will be added when the WebSocket transport is implemented
 
-// Original templates from templates.rs
 /// Template for server main.rs
 pub const SERVER_MAIN_TEMPLATE: &str = r#"//! MCP Server: {{name}}
 
@@ -98,7 +122,6 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
-"#;
 
 /// Template for server Cargo.toml
 pub const SERVER_CARGO_TEMPLATE: &str = r#"[package]
@@ -108,7 +131,7 @@ edition = "2021"
 description = "MCP server generated using mcpr CLI"
 
 [dependencies]
-mcpr = "0.2.3"
+mcpr = "{{version}}"
 clap = { version = "4.4", features = ["derive"] }
 serde_json = "1.0"
 log = "0.4"
@@ -241,7 +264,6 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
-"#;
 
 /// Template for client Cargo.toml
 pub const CLIENT_CARGO_TEMPLATE: &str = r#"[package]
@@ -251,97 +273,75 @@ edition = "2021"
 description = "MCP client generated using mcpr CLI"
 
 [dependencies]
-mcpr = "0.2.3"
+mcpr = "{{version}}"
 clap = { version = "4.4", features = ["derive"] }
 serde_json = "1.0"
 log = "0.4"
 env_logger = "0.10"
 "#;
 
-// Common templates that are not transport-specific
+/// Template for server README.md
 pub const SERVER_README_TEMPLATE: &str = r#"# {{name}}
 
-An MCP server implementation generated using the MCPR CLI.
+This is a server implementation for the {{name}} MCP project.
 
-## Features
-
-- Implements the Model Context Protocol (MCP)
-- Provides a simple "hello" tool for demonstration
-- Configurable logging levels
-
-## Building
+## Building and Running
 
 ```bash
 cargo build
+cargo run -- --help
 ```
 
-## Running
+## Features
 
-```bash
-cargo run
-```
-
-## Available Tools
-
-- `hello`: A simple tool that greets a person by name
-
-## Adding New Tools
-
-To add a new tool, modify the `main.rs` file:
-
-1. Add a new tool definition in the server configuration
-2. Register a handler for the tool
-3. Implement the tool's functionality in the handler
-
-## Configuration
-
-- `--debug`: Enable debug logging
+- Generated with mcpr CLI
 "#;
 
-pub const CLIENT_README_TEMPLATE: &str = r#"# {{name}}
+/// Template for client README.md
+pub const CLIENT_README_TEMPLATE: &str = r#"# {{name}} Client
 
-An MCP client implementation generated using the MCPR CLI.
+This is a client implementation for the {{name}} MCP project.
 
-## Features
-
-- Implements the Model Context Protocol (MCP)
-- Supports both interactive and one-shot modes
-- Can connect to an existing server or start a new server process
-- Configurable logging levels
-
-## Building
+## Building and Running
 
 ```bash
 cargo build
+cargo run -- --help
 ```
 
-## Running
+## Features
 
-### Interactive Mode
+- Generated with mcpr CLI
+"#;
 
-```bash
-cargo run -- --interactive
-```
+/// Default template for server Cargo.toml
+pub const SERVER_CARGO_TEMPLATE: &str = r#"[package]
+name = "{{name}}"
+version = "0.1.0"
+edition = "2021"
+description = "MCP server generated using mcpr CLI"
 
-### One-shot Mode
+[dependencies]
+mcpr = "{{version}}"
+clap = { version = "4.4", features = ["derive"] }
+serde_json = "1.0"
+log = "0.4"
+env_logger = "0.10"
+"#;
 
-```bash
-cargo run -- --name "Your Name"
-```
+/// Default template for client Cargo.toml
+pub const CLIENT_CARGO_TEMPLATE: &str = r#"[package]
+name = "{{name}}"
+version = "0.1.0"
+edition = "2021"
+description = "MCP client generated using mcpr CLI"
 
-### Connecting to an Existing Server
-
-```bash
-cargo run -- --connect --name "Your Name"
-```
-
-## Configuration
-
-- `--debug`: Enable debug logging
-- `--interactive`: Run in interactive mode
-- `--name <NAME>`: Name to greet (for non-interactive mode)
-- `--connect`: Connect to an existing server
-- `--server-cmd <CMD>`: Server command to run (default: "../server/target/debug/{{name}}")
+[dependencies]
+mcpr = "{{version}}"
+clap = { version = "4.4", features = ["derive"] }
+serde_json = "1.0"
+log = "0.4"
+env_logger = "0.10"
 "#;
 
 pub const PROJECT_README_SSE_TEMPLATE: &str = r#"# {{name}} - MCP Project

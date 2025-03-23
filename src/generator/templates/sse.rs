@@ -8,7 +8,7 @@ use mcpr::{
     error::MCPError,
     schema::common::{Tool, ToolInputSchema},
     transport::{
-        sse::SSETransport,
+        sse::SSEServerTransport,
         Transport,
     },
 };
@@ -114,21 +114,21 @@ where
     }
 
     /// Start the server with the given transport
-    fn start(&mut self, mut transport: T) -> Result<(), MCPError> {
+    async fn start(&mut self, mut transport: T) -> Result<(), MCPError> {
         // Start the transport
         info!("Starting transport...");
-        transport.start()?;
+        transport.start().await?;
 
         // Store the transport
         self.transport = Some(transport);
 
         // Process messages
         info!("Processing messages...");
-        self.process_messages()
+        self.process_messages().await
     }
 
     /// Process incoming messages
-    fn process_messages(&mut self) -> Result<(), MCPError> {
+    async fn process_messages(&mut self) -> Result<(), MCPError> {
         info!("Server is running and waiting for client connections...");
         
         loop {
@@ -139,13 +139,13 @@ where
                     .ok_or_else(|| MCPError::Protocol("Transport not initialized".to_string()))?;
 
                 // Receive a message
-                match transport.receive() {
+                match transport.receive().await {
                     Ok(msg) => msg,
                     Err(e) => {
                         // For transport errors, log them but continue waiting
                         // This allows the server to keep running even if there are temporary connection issues
                         error!("Transport error: {}", e);
-                        std::thread::sleep(std::time::Duration::from_millis(1000));
+                        tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
                         continue;
                     }
                 }
@@ -161,15 +161,15 @@ where
                     match method.as_str() {
                         "initialize" => {
                             info!("Received initialization request");
-                            self.handle_initialize(id, params)?;
+                            self.handle_initialize(id, params).await?;
                         }
                         "tool_call" => {
                             info!("Received tool call request");
-                            self.handle_tool_call(id, params)?;
+                            self.handle_tool_call(id, params).await?;
                         }
                         "shutdown" => {
                             info!("Received shutdown request");
-                            self.handle_shutdown(id)?;
+                            self.handle_shutdown(id).await?;
                             break;
                         }
                         _ => {
@@ -179,7 +179,7 @@ where
                                 -32601,
                                 format!("Method not found: {}", method),
                                 None,
-                            )?;
+                            ).await?;
                         }
                     }
                 }
@@ -194,7 +194,7 @@ where
     }
 
     /// Handle initialization request
-    fn handle_initialize(&mut self, id: mcpr::schema::json_rpc::RequestId, _params: Option<Value>) -> Result<(), MCPError> {
+    async fn handle_initialize(&mut self, id: mcpr::schema::json_rpc::RequestId, _params: Option<Value>) -> Result<(), MCPError> {
         let transport = self
             .transport
             .as_mut()
@@ -215,13 +215,13 @@ where
 
         // Send the response
         debug!("Sending initialization response");
-        transport.send(&mcpr::schema::json_rpc::JSONRPCMessage::Response(response))?;
+        transport.send(&mcpr::schema::json_rpc::JSONRPCMessage::Response(response)).await?;
 
         Ok(())
     }
 
     /// Handle tool call request
-    fn handle_tool_call(&mut self, id: mcpr::schema::json_rpc::RequestId, params: Option<Value>) -> Result<(), MCPError> {
+    async fn handle_tool_call(&mut self, id: mcpr::schema::json_rpc::RequestId, params: Option<Value>) -> Result<(), MCPError> {
         let transport = self
             .transport
             .as_mut()
@@ -253,20 +253,20 @@ where
 
                 // Send the response
                 debug!("Sending tool call response: {:?}", response);
-                transport.send(&mcpr::schema::json_rpc::JSONRPCMessage::Response(response))?;
+                transport.send(&mcpr::schema::json_rpc::JSONRPCMessage::Response(response)).await?;
             }
             Err(e) => {
                 // Create error response
-                let error = mcpr::schema::json_rpc::JSONRPCError::new(
-                    id,
-                    -32000,
-                    format!("Tool call failed: {}", e),
-                    None,
-                );
+                let error_obj = mcpr::schema::json_rpc::JSONRPCErrorObject { 
+                    code: -32000, 
+                    message: format!("Tool call failed: {}", e),
+                    data: None
+                };
+                let error = mcpr::schema::json_rpc::JSONRPCError::new(id, error_obj);
 
                 // Send the error response
                 debug!("Sending tool call error response: {:?}", error);
-                transport.send(&mcpr::schema::json_rpc::JSONRPCMessage::Error(error))?;
+                transport.send(&mcpr::schema::json_rpc::JSONRPCMessage::Error(error)).await?;
             }
         }
 
@@ -274,7 +274,7 @@ where
     }
 
     /// Handle shutdown request
-    fn handle_shutdown(&mut self, id: mcpr::schema::json_rpc::RequestId) -> Result<(), MCPError> {
+    async fn handle_shutdown(&mut self, id: mcpr::schema::json_rpc::RequestId) -> Result<(), MCPError> {
         let transport = self
             .transport
             .as_mut()
@@ -285,17 +285,17 @@ where
 
         // Send the response
         debug!("Sending shutdown response");
-        transport.send(&mcpr::schema::json_rpc::JSONRPCMessage::Response(response))?;
+        transport.send(&mcpr::schema::json_rpc::JSONRPCMessage::Response(response)).await?;
 
         // Close the transport
         info!("Closing transport");
-        transport.close()?;
+        transport.close().await?;
 
         Ok(())
     }
 
     /// Send an error response
-    fn send_error(
+    async fn send_error(
         &mut self,
         id: mcpr::schema::json_rpc::RequestId,
         code: i32,
@@ -308,77 +308,89 @@ where
             .ok_or_else(|| MCPError::Protocol("Transport not initialized".to_string()))?;
 
         // Create error response
+        let error_obj = mcpr::schema::json_rpc::JSONRPCErrorObject {
+            code,
+            message: message.clone(),
+            data
+        };
         let error = mcpr::schema::json_rpc::JSONRPCMessage::Error(
-            mcpr::schema::json_rpc::JSONRPCError::new(id, code, message.clone(), data),
+            mcpr::schema::json_rpc::JSONRPCError::new(id, error_obj),
         );
 
         // Send the error
         warn!("Sending error response: {}", message);
-        transport.send(&error)?;
+        transport.send(&error).await?;
 
         Ok(())
     }
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
-    // Initialize logging
-    env_logger::init_from_env(env_logger::Env::default().default_filter_or("info"));
-    
+/// Start the server
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
     // Parse command line arguments
     let args = Args::parse();
-    
-    // Set log level based on debug flag
+
+    // Initialize logging
     if args.debug {
-        log::set_max_level(log::LevelFilter::Debug);
-        debug!("Debug logging enabled");
+        std::env::set_var("RUST_LOG", "debug,mcpr=debug");
+    } else {
+        std::env::set_var("RUST_LOG", "info,mcpr=info");
     }
+    env_logger::init();
+
+    // Create the server configuration
+    let config = ServerConfig::new();
     
-    // Configure the server
-    let server_config = ServerConfig::new()
-        .with_name("{{name}}-server")
-        .with_version("1.0.0")
-        .with_tool(Tool {
-            name: "hello".to_string(),
-            description: Some("A simple hello world tool".to_string()),
-            input_schema: ToolInputSchema {
-                r#type: "object".to_string(),
-                properties: Some([
-                    ("name".to_string(), serde_json::json!({
-                        "type": "string",
-                        "description": "Name to greet"
-                    }))
-                ].into_iter().collect()),
-                required: Some(vec!["name".to_string()]),
-            },
-        });
+    // Create the tools
+    let hello_tool = Tool {
+        name: "hello".to_string(),
+        description: Some("A simple hello world tool".to_string()),
+        input_schema: ToolInputSchema {
+            r#type: "object".to_string(),
+            properties: Some([
+                ("name".to_string(), serde_json::json!({
+                    "type": "string",
+                    "description": "Name to greet"
+                }))
+            ].into_iter().collect()),
+            required: Some(vec!["name".to_string()]),
+        },
+    };
     
     // Create the server
-    let mut server = Server::new(server_config);
+    let mut server = mcpr::server::Server::new(
+        mcpr::server::ServerConfig::new()
+            .with_name("{{name}}-server")
+            .with_version("1.0.0")
+            .with_tool(hello_tool)
+    );
     
     // Register tool handlers
-    server.register_tool_handler("hello", |params: Value| {
-        // Parse parameters
-        let name = params.get("name")
+    server.register_tool_handler("hello", |params: Value| async move {
+        let name = params
+            .get("name")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| MCPError::Protocol("Missing name parameter".to_string()))?;
-        
-        info!("Handling hello tool call for name: {}", name);
-        
-        // Generate response
-        let response = serde_json::json!({
+            .unwrap_or("World");
+            
+        let result = serde_json::json!({
             "message": format!("Hello, {}!", name)
         });
         
-        Ok(response)
+        Ok(result)
     })?;
     
-    // Create transport and start the server
-    let uri = format!("http://localhost:{}", args.port);
-    info!("Starting SSE server on {}", uri);
-    let transport = SSETransport::new_server(&uri);
+    // Create a transport
+    let uri = format!("http://0.0.0.0:{}", args.port);
+    let transport = SSEServerTransport::new(&uri)?;
     
-    info!("Starting {{name}}-server...");
-    server.start(transport)?;
+    // Start the server
+    info!("Starting MCP server with SSE transport on {}", uri);
+    info!("Endpoints:");
+    info!("  - GET  {}/events   (SSE events stream)", uri);
+    info!("  - POST {}/messages (Message endpoint)", uri);
+    
+    server.serve(transport).await?;
     
     Ok(())
 }"#;
@@ -388,18 +400,17 @@ pub const PROJECT_CLIENT_TEMPLATE: &str = r#"//! MCP Client for {{name}} project
 
 use clap::Parser;
 use mcpr::{
+    client::Client,
     error::MCPError,
-    schema::json_rpc::{JSONRPCMessage, JSONRPCRequest, RequestId},
     transport::{
-        sse::SSETransport,
+        sse::SSEClientTransport,
         Transport,
     },
 };
-use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
 use std::error::Error;
 use std::io::{self, Write};
-use log::{info, error, debug};
+use log::{info, error, debug, warn};
 
 /// CLI arguments
 #[derive(Parser)]
@@ -409,165 +420,20 @@ struct Args {
     #[arg(short, long)]
     debug: bool,
     
-    /// Server URI
+    /// URI of the server
     #[arg(short, long, default_value = "http://localhost:8080")]
     uri: String,
     
-    /// Run in interactive mode
+    /// Enable interactive mode
     #[arg(short, long)]
     interactive: bool,
     
-    /// Name to greet (for non-interactive mode)
-    #[arg(short, long)]
-    name: Option<String>,
+    /// Name to use for hello tool
+    #[arg(short, long, default_value = "World")]
+    name: String,
 }
 
-/// High-level MCP client
-struct Client<T: Transport> {
-    transport: T,
-    next_request_id: i64,
-}
-
-impl<T: Transport> Client<T> {
-    /// Create a new MCP client with the given transport
-    fn new(transport: T) -> Self {
-        Self {
-            transport,
-            next_request_id: 1,
-        }
-    }
-
-    /// Initialize the client
-    fn initialize(&mut self) -> Result<Value, MCPError> {
-        // Start the transport
-        debug!("Starting transport");
-        self.transport.start()?;
-
-        // Send initialization request
-        let initialize_request = JSONRPCRequest::new(
-            self.next_request_id(),
-            "initialize".to_string(),
-            Some(serde_json::json!({
-                "protocol_version": mcpr::constants::LATEST_PROTOCOL_VERSION
-            })),
-        );
-
-        let message = JSONRPCMessage::Request(initialize_request);
-        debug!("Sending initialize request: {:?}", message);
-        self.transport.send(&message)?;
-
-        // Wait for response
-        info!("Waiting for initialization response");
-        let response: JSONRPCMessage = self.transport.receive()?;
-        debug!("Received response: {:?}", response);
-
-        match response {
-            JSONRPCMessage::Response(resp) => Ok(resp.result),
-            JSONRPCMessage::Error(err) => {
-                error!("Initialization failed: {:?}", err);
-                Err(MCPError::Protocol(format!(
-                    "Initialization failed: {:?}",
-                    err
-                )))
-            }
-            _ => {
-                error!("Unexpected response type");
-                Err(MCPError::Protocol("Unexpected response type".to_string()))
-            }
-        }
-    }
-
-    /// Call a tool on the server
-    fn call_tool<P: Serialize + std::fmt::Debug, R: DeserializeOwned>(
-        &mut self,
-        tool_name: &str,
-        params: &P,
-    ) -> Result<R, MCPError> {
-        // Create tool call request
-        let tool_call_request = JSONRPCRequest::new(
-            self.next_request_id(),
-            "tool_call".to_string(),
-            Some(serde_json::json!({
-                "name": tool_name,
-                "parameters": serde_json::to_value(params)?
-            })),
-        );
-
-        let message = JSONRPCMessage::Request(tool_call_request);
-        info!("Calling tool '{}' with parameters: {:?}", tool_name, params);
-        debug!("Sending tool call request: {:?}", message);
-        self.transport.send(&message)?;
-
-        // Wait for response
-        info!("Waiting for tool call response");
-        let response: JSONRPCMessage = self.transport.receive()?;
-        debug!("Received response: {:?}", response);
-
-        match response {
-            JSONRPCMessage::Response(resp) => {
-                // Extract the tool result from the response
-                let result_value = resp.result;
-                
-                // Parse the result
-                debug!("Parsing result: {:?}", result_value);
-                serde_json::from_value(result_value).map_err(|e| {
-                    error!("Failed to parse result: {}", e);
-                    MCPError::Serialization(e)
-                })
-            }
-            JSONRPCMessage::Error(err) => {
-                error!("Tool call failed: {:?}", err);
-                Err(MCPError::Protocol(format!("Tool call failed: {:?}", err)))
-            }
-            _ => {
-                error!("Unexpected response type");
-                Err(MCPError::Protocol("Unexpected response type".to_string()))
-            }
-        }
-    }
-
-    /// Shutdown the client
-    fn shutdown(&mut self) -> Result<(), MCPError> {
-        // Send shutdown request
-        let shutdown_request =
-            JSONRPCRequest::new(self.next_request_id(), "shutdown".to_string(), None);
-
-        let message = JSONRPCMessage::Request(shutdown_request);
-        info!("Sending shutdown request");
-        debug!("Shutdown request: {:?}", message);
-        self.transport.send(&message)?;
-
-        // Wait for response
-        info!("Waiting for shutdown response");
-        let response: JSONRPCMessage = self.transport.receive()?;
-        debug!("Received response: {:?}", response);
-
-        match response {
-            JSONRPCMessage::Response(_) => {
-                // Close the transport
-                info!("Closing transport");
-                self.transport.close()?;
-                Ok(())
-            }
-            JSONRPCMessage::Error(err) => {
-                error!("Shutdown failed: {:?}", err);
-                Err(MCPError::Protocol(format!("Shutdown failed: {:?}", err)))
-            }
-            _ => {
-                error!("Unexpected response type");
-                Err(MCPError::Protocol("Unexpected response type".to_string()))
-            }
-        }
-    }
-
-    /// Generate the next request ID
-    fn next_request_id(&mut self) -> RequestId {
-        let id = self.next_request_id;
-        self.next_request_id += 1;
-        RequestId::Number(id)
-    }
-}
-
+/// Prompt for user input
 fn prompt_input(prompt: &str) -> Result<String, io::Error> {
     print!("{}: ", prompt);
     io::stdout().flush()?;
@@ -578,115 +444,106 @@ fn prompt_input(prompt: &str) -> Result<String, io::Error> {
     Ok(input.trim().to_string())
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
-    // Initialize logging
-    env_logger::init_from_env(env_logger::Env::default().default_filter_or("info"));
-    
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
     // Parse command line arguments
     let args = Args::parse();
-    
-    // Set log level based on debug flag
+
+    // Initialize logging
     if args.debug {
-        log::set_max_level(log::LevelFilter::Debug);
-        debug!("Debug logging enabled");
+        std::env::set_var("RUST_LOG", "debug,mcpr=debug");
+    } else {
+        std::env::set_var("RUST_LOG", "info,mcpr=info");
+    }
+    env_logger::init();
+
+    // Create a transport
+    let server_url = args.uri.clone();
+    info!("Connecting to server: {}", server_url);
+    let transport = SSEClientTransport::new(&server_url)?;
+    
+    // Create a client
+    let mut client = Client::new(transport);
+
+    // Initialize client
+    info!("Initializing client...");
+    let init_result = client.initialize().await?;
+    
+    // Get server information
+    if let Some(server_info) = init_result.get("server_info") {
+        info!("Server info: {}", serde_json::to_string(&server_info)?);
+        
+        println!("Available tools:");
+        if let Some(tools) = init_result.get("tools").and_then(|t| t.as_array()) {
+            for tool in tools {
+                println!("  - {}: {}", 
+                    tool.get("name").and_then(|n| n.as_str()).unwrap_or("unknown"),
+                    tool.get("description").and_then(|d| d.as_str()).unwrap_or("No description"));
+            }
+        } else {
+            println!("  No tools available");
+        }
     }
     
-    // Create transport and client
-    info!("Using SSE transport with URI: {}", args.uri);
-    let transport = SSETransport::new(&args.uri);
-    
-    let mut client = Client::new(transport);
-    
-    // Initialize the client
-    info!("Initializing client...");
-    let _init_result = match client.initialize() {
-        Ok(result) => {
-            info!("Server info: {:?}", result);
-            result
-        },
-        Err(e) => {
-            error!("Failed to initialize client: {}", e);
-            return Err(Box::new(e));
-        }
-    };
-    
+    // Handle interactive or one-shot mode
     if args.interactive {
-        // Interactive mode
-        info!("=== {{name}}-client Interactive Mode ===");
-        println!("=== {{name}}-client Interactive Mode ===");
-        println!("Type 'exit' or 'quit' to exit");
+        info!("Running in interactive mode");
         
+        // Interactive loop
         loop {
-            let name = prompt_input("Enter your name (or 'exit' to quit)")?;
-            if name.to_lowercase() == "exit" || name.to_lowercase() == "quit" {
-                info!("User requested exit");
+            let tool_name = prompt_input("Enter tool name (or 'exit' to quit)")?;
+            
+            if tool_name.to_lowercase() == "exit" {
                 break;
             }
             
-            // Call the hello tool
-            let request = serde_json::json!({
-                "name": name
-            });
-            
-            match client.call_tool::<Value, Value>("hello", &request) {
-                Ok(response) => {
-                    if let Some(message) = response.get("message") {
-                        let msg = message.as_str().unwrap_or("");
-                        info!("Received message: {}", msg);
-                        println!("{}", msg);
-                    } else {
-                        info!("Received response without message field: {:?}", response);
-                        println!("Response: {:?}", response);
+            // Check if the tool exists in the available tools
+            let tool_exists = init_result.get("tools")
+                .and_then(|t| t.as_array())
+                .map(|tools| tools.iter().any(|t| t.get("name").and_then(|n| n.as_str()) == Some(&tool_name)))
+                .unwrap_or(false);
+                
+            if tool_name.to_lowercase() == "hello" || tool_exists {
+                let name = prompt_input("Enter name to greet")?;
+                
+                info!("Calling tool '{}' with parameters: {}", tool_name, name);
+                match client.call_tool::<_, Value>(&tool_name, &serde_json::json!({
+                    "name": name
+                })).await {
+                    Ok(response) => {
+                        let message = response.get("message").and_then(|m| m.as_str()).unwrap_or("No message");
+                        println!("{}", message);
+                    },
+                    Err(e) => {
+                        error!("Tool call failed: {}", e);
+                        println!("Error: {}", e);
                     }
-                },
-                Err(e) => {
-                    error!("Error calling tool: {}", e);
-                    eprintln!("Error: {}", e);
                 }
+            } else {
+                println!("Unknown tool: {}", tool_name);
             }
-            
-            println!();
         }
-        
-        info!("Exiting interactive mode");
-        println!("Exiting interactive mode");
     } else {
         // One-shot mode
-        let name = args.name.ok_or_else(|| {
-            error!("Name is required in non-interactive mode");
-            "Name is required in non-interactive mode"
-        })?;
-        
-        info!("Running in one-shot mode with name: {}", name);
+        info!("Running in one-shot mode with name: {}", args.name);
         
         // Call the hello tool
-        let request = serde_json::json!({
-            "name": name
-        });
+        info!("Calling tool 'hello' with parameters: {}", serde_json::json!({"name": args.name}));
+        let response: Value = client.call_tool("hello", &serde_json::json!({
+            "name": args.name
+        })).await?;
         
-        let response: Value = match client.call_tool("hello", &request) {
-            Ok(response) => response,
-            Err(e) => {
-                error!("Error calling tool: {}", e);
-                return Err(Box::new(e));
-            }
-        };
-        
-        if let Some(message) = response.get("message") {
-            let msg = message.as_str().unwrap_or("");
-            info!("Received message: {}", msg);
-            println!("{}", msg);
+        info!("Received message: {}", response.get("message").and_then(|m| m.as_str()).unwrap_or("No message"));
+        if let Some(message) = response.get("message").and_then(|m| m.as_str()) {
+            println!("{}", message);
         } else {
-            info!("Received response without message field: {:?}", response);
-            println!("Response: {:?}", response);
+            println!("No message received");
         }
     }
     
     // Shutdown the client
     info!("Shutting down client");
-    if let Err(e) = client.shutdown() {
-        error!("Error during shutdown: {}", e);
-    }
+    client.shutdown().await?;
     info!("Client shutdown complete");
     
     Ok(())
@@ -709,7 +566,8 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 env_logger = "0.10"
 log = "0.4"
-reqwest = { version = "0.11", features = ["blocking", "json"] }
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.11", features = ["json"] }
 "#;
 
 /// Template for project client Cargo.toml with SSE transport
@@ -729,7 +587,8 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 env_logger = "0.10"
 log = "0.4"
-reqwest = { version = "0.11", features = ["blocking", "json"] }
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.11", features = ["json"] }
 "#;
 
 /// Template for project test script with SSE transport

@@ -1,6 +1,6 @@
 use futures::future::join_all;
 use log::{error, info};
-use mcpr::{client::Client, error::MCPError, transport::websocket::WebSocketTransport};
+use mcpr::{client::Client, error::MCPError, transport::sse::SSEClientTransport};
 use serde_json::json;
 use std::time::Instant;
 
@@ -11,9 +11,9 @@ async fn main() -> Result<(), MCPError> {
         env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
     );
 
-    // Connect to the WebSocket server
-    info!("Connecting to WebSocket server...");
-    let transport = WebSocketTransport::new("ws://127.0.0.1:8080");
+    // Connect to the SSE server
+    info!("Connecting to SSE server...");
+    let transport = SSEClientTransport::new("http://127.0.0.1:8889/events")?;
 
     // Create a client
     let mut client = Client::new(transport);
@@ -53,7 +53,11 @@ async fn main() -> Result<(), MCPError> {
         // Spawn a separate task with its own client for each request
         let task_handle = tokio::spawn(async move {
             // Create a new client for this task
-            let transport = WebSocketTransport::new("ws://127.0.0.1:8080");
+            let transport =
+                SSEClientTransport::new("http://127.0.0.1:8889/events").map_err(|e| {
+                    error!("Task {} - Failed to create transport: {}", i, e);
+                    (i, format!("Transport error: {}", e))
+                })?;
             let mut client = Client::new(transport);
 
             // Initialize the client

@@ -21,10 +21,6 @@ Check out our [GitHub Tools example](examples/github-tools/README.md) for a comp
 - **Project Generator**: Quickly scaffold new MCP projects
 - **Mock Implementations**: Built-in mock transports for testing and development
 
-## Coming Soon
-
-- **WebSocket Transport**: WebSocket transport implementation is planned but not yet implemented
-
 ## Installation
 
 Add MCPR to your `Cargo.toml`:
@@ -52,19 +48,24 @@ use mcpr::{
     transport::stdio::StdioTransport,
 };
 
-// Create a client with stdio transport
-let transport = StdioTransport::new();
-let mut client = Client::new(transport);
+#[tokio::main]
+async fn main() -> Result<(), mcpr::error::MCPError> {
+    // Create a client with stdio transport
+    let transport = StdioTransport::new();
+    let mut client = Client::new(transport);
 
-// Initialize the client
-client.initialize()?;
+    // Initialize the client
+    client.initialize().await?;
 
-// Call a tool
-let request = MyToolRequest { /* ... */ };
-let response: MyToolResponse = client.call_tool("my_tool", &request)?;
+    // Call a tool
+    let request = serde_json::json!({ /* parameters */ });
+    let response = client.call_tool::<_, serde_json::Value>("my_tool", &request).await?;
 
-// Shutdown the client
-client.shutdown()?;
+    // Shutdown the client
+    client.shutdown().await?;
+
+    Ok(())
+}
 ```
 
 ### High-Level Server
@@ -73,40 +74,57 @@ The high-level server makes it easy to create MCP-compatible servers:
 
 ```rust
 use mcpr::{
+    error::MCPError,
     server::{Server, ServerConfig},
     transport::stdio::StdioTransport,
-    Tool,
+    schema::common::Tool,
 };
+use serde_json::Value;
 
-// Configure the server
-let server_config = ServerConfig::new()
-    .with_name("My MCP Server")
-    .with_version("1.0.0")
-    .with_tool(Tool {
-        name: "my_tool".to_string(),
-        description: "My awesome tool".to_string(),
-        parameters_schema: serde_json::json!({
-            "type": "object",
-            "properties": {
-                // Tool parameters schema
+#[tokio::main]
+async fn main() -> Result<(), MCPError> {
+    // Configure the server
+    let server_config = ServerConfig::new()
+        .with_name("My MCP Server")
+        .with_version("1.0.0")
+        .with_tool(Tool {
+            name: "my_tool".to_string(),
+            description: Some("My awesome tool".to_string()),
+            input_schema: mcpr::schema::common::ToolInputSchema {
+                r#type: "object".to_string(),
+                properties: Some([
+                    ("param1".to_string(), serde_json::json!({
+                        "type": "string",
+                        "description": "First parameter"
+                    })),
+                    ("param2".to_string(), serde_json::json!({
+                        "type": "string",
+                        "description": "Second parameter"
+                    }))
+                ].into_iter().collect()),
+                required: Some(vec!["param1".to_string(), "param2".to_string()]),
             },
-            "required": ["param1", "param2"]
-        }),
-    });
+        });
 
-// Create the server
-let mut server = Server::new(server_config);
+    // Create the server
+    let mut server = Server::new(server_config);
 
-// Register tool handlers
-server.register_tool_handler("my_tool", |params| {
-    // Parse parameters and handle the tool call
-    // ...
-    Ok(serde_json::to_value(response)?)
-})?;
+    // Register tool handlers
+    server.register_tool_handler("my_tool", |params: Value| async move {
+        // Process the parameters and generate a response
+        let response = serde_json::json!({
+            "result": "Tool executed successfully"
+        });
 
-// Start the server with stdio transport
-let transport = StdioTransport::new();
-server.start(transport)?;
+        Ok(response)
+    })?;
+
+    // Start the server with stdio transport
+    let transport = StdioTransport::new();
+    server.serve(transport).await?;
+
+    Ok(())
+}
 ```
 
 ## Creating MCP Projects
@@ -158,6 +176,7 @@ mcpr = "0.2.3"
 ```
 
 This allows you to:
+
 1. Test your local MCPR changes with generated projects
 2. Easily switch back to the stable published version
 3. Develop and test new features in isolation
@@ -220,6 +239,7 @@ The SSE transport supports both interactive and one-shot modes:
 ```
 
 The mock SSE transport implementation includes:
+
 - Automatic response generation for initialization
 - Echo-back functionality for tool calls
 - Proper error handling and logging
@@ -253,35 +273,42 @@ Each generated project includes test scripts:
 
 ## Transport Options
 
-MCPR supports multiple transport options:
+MCPR provides multiple transport implementations for different use cases:
 
 ### Stdio Transport
 
-The simplest transport, using standard input/output:
+The stdio transport uses standard input/output for communication, making it ideal for:
 
-```rust
-use mcpr::transport::stdio::StdioTransport;
+- Local client-server pairs running in the same process or as parent-child processes
+- Command-line tools and utilities
+- Testing and development
 
-let transport = StdioTransport::new();
+```bash
+# Run a server that communicates via stdio
+./my-server
+
+# Run a client that connects to the server via stdio
+./my-client | ./my-server
 ```
 
 ### SSE Transport
 
-Server-Sent Events transport for web-based applications:
+The Server-Sent Events (SSE) transport enables HTTP-based communication with server-to-client events:
 
-```rust
-use mcpr::transport::sse::SSETransport;
+- Server listens on HTTP endpoints for client connections and messages
+- Clients connect via SSE for receiving messages and HTTP POST for sending
+- Works across network boundaries and through most firewalls
+- Compatible with web browsers and HTTP clients
 
-// For server
-let transport = SSETransport::new("http://localhost:8080");
+```bash
+# Run a server with SSE transport
+./my-server --transport sse --port 8000
 
-// For client
-let transport = SSETransport::new("http://localhost:8080");
+# Connect a client to the SSE server
+./my-client --uri http://localhost:8000
 ```
 
-### WebSocket Transport (Coming Soon)
-
-WebSocket transport for bidirectional communication is currently under development.
+See [README_SSE_TRANSPORT.md](README_SSE_TRANSPORT.md) for detailed documentation on the SSE transport implementation.
 
 ## Detailed Testing Guide
 
@@ -304,6 +331,7 @@ Note: The `--output` parameter specifies where to create the project directory. 
 ### Testing Stdio Transport Projects
 
 1. **Build the project**:
+
    ```bash
    cd /tmp/test-stdio-project
    cd server && cargo build
@@ -311,12 +339,14 @@ Note: The `--output` parameter specifies where to create the project directory. 
    ```
 
 2. **Run the server and client together**:
+
    ```bash
    cd /tmp/test-stdio-project
    ./server/target/debug/test-stdio-project-server | ./client/target/debug/test-stdio-project-client
    ```
 
    You should see output similar to:
+
    ```
    [INFO] Using stdio transport
    [INFO] Initializing client...
@@ -330,6 +360,7 @@ Note: The `--output` parameter specifies where to create the project directory. 
    ```
 
 3. **Run with detailed logging**:
+
    ```bash
    RUST_LOG=debug ./server/target/debug/test-stdio-project-server | RUST_LOG=debug ./client/target/debug/test-stdio-project-client
    ```
@@ -342,6 +373,7 @@ Note: The `--output` parameter specifies where to create the project directory. 
 ### Testing SSE Transport Projects
 
 1. **Build the project**:
+
    ```bash
    cd /tmp/test-sse-project
    cd server && cargo build
@@ -349,18 +381,21 @@ Note: The `--output` parameter specifies where to create the project directory. 
    ```
 
 2. **Run the server**:
+
    ```bash
    cd /tmp/test-sse-project/server
    RUST_LOG=trace cargo run -- --port 8084 --debug
    ```
 
 3. **In another terminal, run the client**:
+
    ```bash
    cd /tmp/test-sse-project/client
    RUST_LOG=trace cargo run -- --uri "http://localhost:8084" --name "Test User"
    ```
 
    You should see output similar to:
+
    ```
    [INFO] Using SSE transport with URI: http://localhost:8084
    [INFO] Initializing client...
@@ -378,6 +413,7 @@ Note: The `--output` parameter specifies where to create the project directory. 
 #### Common Issues with Stdio Transport
 
 1. **Pipe Connection Issues**:
+
    - Ensure that the server output is properly piped to the client input
    - Check for any terminal configuration that might interfere with piping
 
@@ -388,7 +424,7 @@ Note: The `--output` parameter specifies where to create the project directory. 
 #### Common Issues with SSE Transport
 
 1. **Dependency Issues**:
-   
+
    If you encounter dependency errors when building generated projects, you may need to update the `Cargo.toml` files to point to your local MCPR crate (see the [Local Development with Templates](#local-development-with-templates) section):
 
    ```toml
@@ -399,7 +435,7 @@ Note: The `--output` parameter specifies where to create the project directory. 
    ```
 
 2. **Port Already in Use**:
-   
+
    If the SSE server fails to start with a "port already in use" error, try a different port:
 
    ```bash
@@ -407,7 +443,7 @@ Note: The `--output` parameter specifies where to create the project directory. 
    ```
 
 3. **Connection Refused**:
-   
+
    If the client cannot connect to the server, ensure the server is running and the port is correct:
 
    ```bash
@@ -416,12 +452,13 @@ Note: The `--output` parameter specifies where to create the project directory. 
    ```
 
 4. **HTTP Method Not Allowed (405)**:
-   
+
    If you see HTTP 405 errors, ensure that the server is correctly handling all required HTTP methods (GET and POST) for the SSE transport.
 
 5. **Client Registration Issues**:
-   
+
    The SSE transport requires client registration before message exchange. Ensure that:
+
    - The client successfully registers with the server
    - The client ID is properly passed in polling requests
    - The server maintains the client connection state
@@ -439,6 +476,7 @@ Both transport types support interactive mode for manual testing:
 ```
 
 In interactive mode, you can:
+
 - Enter tool names and parameters manually
 - Test different parameter combinations
 - Observe the server's responses in real-time
@@ -448,8 +486,9 @@ In interactive mode, you can:
 For more advanced testing scenarios:
 
 1. **Testing with Multiple Clients**:
-   
+
    The SSE transport supports multiple concurrent clients:
+
    ```bash
    # Start multiple client instances in different terminals
    ./client/target/debug/test-sse-project-client --uri "http://localhost:8084" --name "User 1"
@@ -457,15 +496,16 @@ For more advanced testing scenarios:
    ```
 
 2. **Testing Error Handling**:
-   
+
    Test how the system handles errors by sending invalid requests:
+
    ```bash
    # In interactive mode, try calling a non-existent tool
    > call nonexistent_tool {"param": "value"}
    ```
 
 3. **Performance Testing**:
-   
+
    For performance testing, you can use tools like Apache Bench or wrk to simulate multiple concurrent clients.
 
 ## Debugging
@@ -487,4 +527,4 @@ RUST_LOG=debug cargo run
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details. 
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

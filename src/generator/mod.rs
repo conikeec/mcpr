@@ -169,6 +169,7 @@ fn generate_server_main(server_dir: &Path, name: &str) -> Result<(), GeneratorEr
 fn generate_server_cargo_toml(server_dir: &Path, name: &str) -> Result<(), GeneratorError> {
     let cargo_toml = server_dir.join("Cargo.toml");
 
+    // Default to the general server template
     let content = templates::SERVER_CARGO_TEMPLATE
         .replace("{{name}}", name)
         .replace("{{version}}", VERSION);
@@ -199,6 +200,7 @@ fn generate_client_main(client_dir: &Path, name: &str) -> Result<(), GeneratorEr
 fn generate_client_cargo_toml(client_dir: &Path, name: &str) -> Result<(), GeneratorError> {
     let cargo_toml = client_dir.join("Cargo.toml");
 
+    // Default to the general client template
     let content = templates::CLIENT_CARGO_TEMPLATE
         .replace("{{name}}", name)
         .replace("{{version}}", VERSION);

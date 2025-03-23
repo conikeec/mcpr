@@ -6,27 +6,29 @@ use log::{error, info, warn};
 use mcpr::{
     client::Client,
     error::MCPError,
+    schema::common::Tool,
+    server::{Server, ServerConfig},
     transport::{
-        sse::SSETransport, stdio::StdioTransport, websocket::WebSocketTransport, Transport,
+        sse::{SSEClientTransport, SSEServerTransport},
+        stdio::StdioTransport,
+        Transport,
     },
 };
 use std::path::PathBuf;
 
 /// MCP CLI tool for generating server and client stubs
-#[derive(Parser)]
-#[command(author, version, about, long_about = None)]
-struct Cli {
-    #[command(subcommand)]
-    command: Commands,
-}
-
-#[derive(Subcommand)]
-enum Commands {
+#[derive(Parser, Debug)]
+#[command(name = "mcpr", about = "MCP CLI tools", version)]
+enum Cli {
     /// Generate a server stub
     GenerateServer {
-        /// Name of the server
+        /// Server name
         #[arg(short, long)]
         name: String,
+
+        /// Transport type to use (stdio, sse)
+        #[arg(short, long, default_value = "stdio")]
+        transport: String,
 
         /// Output directory
         #[arg(short, long, default_value = ".")]
@@ -35,28 +37,32 @@ enum Commands {
 
     /// Generate a client stub
     GenerateClient {
-        /// Name of the client
+        /// Client name
         #[arg(short, long)]
         name: String,
+
+        /// Transport type to use (stdio, sse)
+        #[arg(short, long, default_value = "stdio")]
+        transport: String,
 
         /// Output directory
         #[arg(short, long, default_value = ".")]
         output: String,
     },
 
-    /// Generate a complete "hello mcp" project with both client and server
+    /// Generate a complete MCP project with client and server
     GenerateProject {
-        /// Name of the project
+        /// Project name
         #[arg(short, long)]
         name: String,
+
+        /// Transport type to use (stdio, sse)
+        #[arg(short, long, default_value = "stdio")]
+        transport: String,
 
         /// Output directory
         #[arg(short, long, default_value = ".")]
         output: String,
-
-        /// Transport type to use (stdio, sse, websocket)
-        #[arg(short, long, default_value = "stdio")]
-        transport: String,
     },
 
     /// Run a server
@@ -65,7 +71,7 @@ enum Commands {
         #[arg(short, long, default_value_t = 8080)]
         port: u16,
 
-        /// Transport type to use (stdio, sse, websocket)
+        /// Transport type to use (stdio, sse)
         #[arg(short, long, default_value = "stdio")]
         transport: String,
 
@@ -88,7 +94,7 @@ enum Commands {
         #[arg(short, long, default_value = "Default User")]
         name: String,
 
-        /// Transport type to use (stdio, sse, websocket)
+        /// Transport type to use (stdio, sse)
         #[arg(short, long)]
         transport: String,
 
@@ -131,53 +137,57 @@ async fn main() -> Result<(), MCPError> {
     // Parse command-line arguments
     let cli = Cli::parse();
 
-    match cli.command {
-        Commands::GenerateServer { name, output } => {
+    match cli {
+        Cli::GenerateServer {
+            name,
+            transport,
+            output,
+        } => {
             info!(
                 "Generating server stub with name '{}' to '{}'",
                 name, output
             );
-            let _output_path = PathBuf::from(output.clone());
+            let output_path = PathBuf::from(output.clone());
 
-            // TODO: Generate server stub
-            Err(MCPError::UnsupportedFeature(
-                "Server stub generation not yet implemented".to_string(),
-            ))
+            // Generate server using the generator module
+            mcpr::generator::generate_server(&name, &output_path)
+                .map_err(|e| MCPError::Transport(format!("Failed to generate server: {}", e)))
         }
-        Commands::GenerateClient { name, output } => {
+        Cli::GenerateClient {
+            name,
+            transport,
+            output,
+        } => {
             info!(
                 "Generating client stub with name '{}' to '{}'",
                 name, output
             );
-            let _output_path = PathBuf::from(output.clone());
+            let output_path = PathBuf::from(output.clone());
 
-            // TODO: Generate client stub
-            Err(MCPError::UnsupportedFeature(
-                "Client stub generation not yet implemented".to_string(),
-            ))
+            // Generate client using the generator module
+            mcpr::generator::generate_client(&name, &output_path)
+                .map_err(|e| MCPError::Transport(format!("Failed to generate client: {}", e)))
         }
-        Commands::GenerateProject {
+        Cli::GenerateProject {
             name,
-            output,
             transport,
+            output,
         } => {
             info!(
                 "Generating project '{}' in '{}' with transport '{}'",
                 name, output, transport
             );
-            let _output_path = PathBuf::from(output.clone());
 
-            // TODO: Generate project
-            Err(MCPError::UnsupportedFeature(
-                "Project generation not yet implemented".to_string(),
-            ))
+            // Generate project using the generator module
+            mcpr::generator::generate_project(&name, &output, &transport)
+                .map_err(|e| MCPError::Transport(format!("Failed to generate project: {}", e)))
         }
-        Commands::RunServer {
+        Cli::RunServer {
             port,
             transport,
             debug,
         } => run_server(port, &transport, debug).await,
-        Commands::Connect {
+        Cli::Connect {
             uri,
             interactive,
             name,
@@ -195,7 +205,7 @@ async fn main() -> Result<(), MCPError> {
             })
             .await
         }
-        Commands::Validate { path } => {
+        Cli::Validate { path } => {
             info!("Validating message from '{}'", path);
             // TODO: Implement message validation
             info!("Message validation not yet implemented");
@@ -228,17 +238,58 @@ async fn run_server(port: u16, transport_type: &str, debug: bool) -> Result<(), 
         }
         "sse" => {
             info!("Starting server with SSE transport on port {}", port);
-            // TODO: Implement SSE server
-            Err(MCPError::UnsupportedFeature(
-                "SSE server not yet implemented".to_string(),
-            ))
-        }
-        "websocket" => {
-            info!("Starting server with WebSocket transport on port {}", port);
-            // TODO: Implement WebSocket server
-            Err(MCPError::UnsupportedFeature(
-                "WebSocket server not yet implemented".to_string(),
-            ))
+
+            // Create a URI for the SSE server
+            let uri = format!("http://0.0.0.0:{}", port);
+
+            // Create the SSE transport
+            let transport = SSEServerTransport::new(&uri)?;
+
+            // Configure a basic echo tool
+            let echo_tool = Tool {
+                name: "echo".to_string(),
+                description: Some("Echo tool".to_string()),
+                input_schema: mcpr::schema::common::ToolInputSchema {
+                    r#type: "object".to_string(),
+                    properties: Some(
+                        [(
+                            "message".to_string(),
+                            serde_json::json!({
+                                "type": "string",
+                                "description": "Message to echo"
+                            }),
+                        )]
+                        .into_iter()
+                        .collect(),
+                    ),
+                    required: Some(vec!["message".to_string()]),
+                },
+            };
+
+            // Create server config
+            let server_config = ServerConfig::new()
+                .with_name("MCP SSE Server")
+                .with_version("1.0.0")
+                .with_tool(echo_tool);
+
+            // Create and start the server
+            let mut server = Server::new(server_config);
+
+            // Register the echo tool handler
+            server.register_tool_handler("echo", |params| async move {
+                let message = params
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| MCPError::Protocol("Missing message parameter".to_string()))?;
+
+                info!("Echo request: {}", message);
+
+                Ok(serde_json::json!({"result": message}))
+            })?;
+
+            // Start the server
+            info!("Starting SSE server on {}", uri);
+            server.serve(transport).await
         }
         _ => {
             error!("Unsupported transport type: {}", transport_type);
@@ -254,19 +305,14 @@ async fn run_server(port: u16, transport_type: &str, debug: bool) -> Result<(), 
 async fn run_client(cmd: Connect) -> Result<(), MCPError> {
     info!("Connecting to {}", cmd.uri);
 
-    let uri = cmd.uri.clone();
-
     // Handle different transport types directly
     match cmd.transport.as_str() {
         "sse" => {
-            info!("Using SSE transport");
-            let transport = SSETransport::new(&uri);
-            let mut client = Client::new(transport);
-            handle_client_session(&mut client, cmd).await
-        }
-        "websocket" => {
-            info!("Using WebSocket transport");
-            let transport = WebSocketTransport::new(&uri);
+            info!("Using SSE transport with URI: {}", cmd.uri);
+            // For SSE transport, we now only need to provide the events URL
+            // The messages URL will be dynamically received from the server via an "endpoint" event
+            let transport = SSEClientTransport::new(&cmd.uri)
+                .map_err(|e| MCPError::Transport(format!("Failed to create SSE client: {}", e)))?;
             let mut client = Client::new(transport);
             handle_client_session(&mut client, cmd).await
         }

@@ -104,7 +104,7 @@ impl Transport for StdioTransport {
         let json = match serde_json::to_string(message) {
             Ok(json) => json,
             Err(e) => {
-                let error = MCPError::Serialization(e);
+                let error = MCPError::Serialization(e.to_string());
                 self.handle_error(&error);
                 return Err(error);
             }
@@ -138,7 +138,7 @@ impl Transport for StdioTransport {
                 match serde_json::from_str(&line) {
                     Ok(parsed) => Ok(parsed),
                     Err(e) => {
-                        let error = MCPError::Serialization(e);
+                        let error = MCPError::Serialization(e.to_string());
                         self.handle_error(&error);
                         Err(error)
                     }
@@ -239,19 +239,6 @@ mod tests {
     // Simple implementation of AsyncWrite for testing
     struct MockAsyncWrite {
         written: Arc<TokioMutex<Vec<String>>>,
-    }
-
-    impl MockAsyncWrite {
-        fn new() -> Self {
-            Self {
-                written: Arc::new(TokioMutex::new(Vec::new())),
-            }
-        }
-
-        async fn get_written(&self) -> Vec<String> {
-            let written = self.written.lock().await;
-            written.clone()
-        }
     }
 
     impl AsyncWrite for MockAsyncWrite {

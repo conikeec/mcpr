@@ -6,7 +6,6 @@
 //! The following transport types are supported:
 //! - Stdio: Standard input/output for local processes
 //! - SSE: Server-Sent Events for server-to-client messages with HTTP POST for client-to-server
-//! - WebSocket: Bidirectional communication over WebSockets
 //!
 //! The transport implementations are now fully async, using tokio for async I/O.
 
@@ -56,5 +55,10 @@ pub mod stdio;
 /// Server-Sent Events (SSE) transport
 pub mod sse;
 
-/// WebSocket transport
-pub mod websocket;
+// Tests for SSE transport
+#[cfg(test)]
+mod sse_tests;
+
+// Temporarily comment out this module due to dependency errors
+// #[cfg(test)]
+// mod sse_tests;
