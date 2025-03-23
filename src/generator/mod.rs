@@ -118,6 +118,9 @@ pub fn generate_project(
     // Generate test script
     generate_project_test_script(&project_dir, name, transport_type)?;
 
+    // Generate test script
+    generate_mcp_inspector_script(&project_dir, name, transport_type)?;
+
     println!(
         "Project '{}' with {} transport generated successfully in '{}'",
         name,
@@ -368,6 +371,34 @@ fn generate_project_test_script(
     let content = test_script_template.replace("{{name}}", name);
     fs::write(&test_script, content)?;
     make_executable(&test_script)?;
+
+    Ok(())
+}
+
+fn generate_mcp_inspector_script(
+    project_dir: &Path,
+    name: &str,
+    transport_type: &str,
+) -> Result<(), GeneratorError> {
+    // Generate test script
+    let script = project_dir.join("mcp-inspector.sh");
+
+    // Select the appropriate test script template based on transport type
+    let script_template = match transport_type {
+        "stdio" => templates::STDIO_MCP_INSPECTOR_TEMPLATE,
+        "sse" => {return Ok(());},
+        _ => {
+            return Err(GeneratorError::Template(format!(
+                "Unsupported transport type: {}. Supported types are 'stdio' and 'sse'. WebSocket transport is planned but not yet implemented.",
+                transport_type
+            )))
+        }
+    };
+
+    // Replace template variables
+    let content = script_template.replace("{{name}}", name);
+    fs::write(&script, content)?;
+    make_executable(&script)?;
 
     Ok(())
 }

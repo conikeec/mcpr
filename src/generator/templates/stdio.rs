@@ -159,7 +159,11 @@ where
                             info!("Received initialization request");
                             self.handle_initialize(id, params)?;
                         }
-                        "tool_call" => {
+                        "tools/list" => {
+                            info!("Received tool list request");
+                            self.handle_tool_list(id, params)?;
+                        }
+                        "tools/call" => {
                             info!("Received tool call request");
                             self.handle_tool_call(id, params)?;
                         }
@@ -200,11 +204,35 @@ where
         let response = mcpr::schema::json_rpc::JSONRPCResponse::new(
             id,
             serde_json::json!({
-                "protocol_version": mcpr::constants::LATEST_PROTOCOL_VERSION,
-                "server_info": {
+                "protocolVersion": mcpr::constants::LATEST_PROTOCOL_VERSION,
+                "serverInfo": {
                     "name": self.config.name,
                     "version": self.config.version
                 },
+                "capabilities": {
+                    "tools": {}
+                }
+            }),
+        );
+
+        // Send the response
+        debug!("Sending initialization response");
+        transport.send(&mcpr::schema::json_rpc::JSONRPCMessage::Response(response))?;
+
+        Ok(())
+    }
+
+    /// Handle tool list
+    fn handle_tool_list(&mut self, id: mcpr::schema::json_rpc::RequestId, _params: Option<Value>) -> Result<(), MCPError> {
+        let transport = self
+            .transport
+            .as_mut()
+            .ok_or_else(|| MCPError::Protocol("Transport not initialized".to_string()))?;
+
+        // Create initialization response
+        let response = mcpr::schema::json_rpc::JSONRPCResponse::new(
+            id,
+            serde_json::json!({
                 "tools": self.config.tools
             }),
         );
@@ -233,8 +261,8 @@ where
             .and_then(|v| v.as_str())
             .ok_or_else(|| MCPError::Protocol("Missing tool name in parameters".to_string()))?;
 
-        let tool_params = params.get("parameters").cloned().unwrap_or(Value::Null);
-        debug!("Tool call: {} with parameters: {:?}", tool_name, tool_params);
+        let arguments = params.get("arguments").cloned().unwrap_or(Value::Null);
+        debug!("Tool call: {} with arguments: {:?}", tool_name, arguments);
 
         // Find the tool handler
         let handler = self.tool_handlers.get(tool_name).ok_or_else(|| {
@@ -242,13 +270,18 @@ where
         })?;
 
         // Call the handler
-        match handler(tool_params) {
+        match handler(arguments) {
             Ok(result) => {
                 // Create tool result response
                 let response = mcpr::schema::json_rpc::JSONRPCResponse::new(
                     id,
                     serde_json::json!({
-                        "result": result
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": serde_json::to_string(&result)?
+                            }
+                        ]
                     }),
                 );
 
@@ -302,7 +335,7 @@ where
 
         // Create error response
         let error = mcpr::schema::json_rpc::JSONRPCMessage::Error(
-            mcpr::schema::json_rpc::JSONRPCError::new(id, code, message.clone(), data),
+            mcpr::schema::json_rpc::JSONRPCError::new_with_details(id, code, message.clone(), data),
         );
 
         // Send the error
@@ -349,9 +382,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut server = Server::new(server_config);
     
     // Register tool handlers
-    server.register_tool_handler("hello", |params: Value| {
-        // Parse parameters
-        let name = params.get("name")
+    server.register_tool_handler("hello", |arguments: Value| {
+        // Parse arguments
+        let name = arguments.get("name")
             .and_then(|v| v.as_str())
             .ok_or_else(|| MCPError::Protocol("Missing name parameter".to_string()))?;
         
@@ -813,9 +846,9 @@ description = "MCP server for {{name}} project with stdio transport"
 
 [dependencies]
 # For local development, use path dependency:
-# mcpr = { path = "../.." }
+mcpr = { path = "../../mcpr" }
 # For production, use version from crates.io:
-mcpr = "{{version}}"
+# mcpr = "{{version}}"
 clap = { version = "4.4", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -933,4 +966,15 @@ rm connect_output.txt
 kill $SERVER_PID
 
 echo -e "${GREEN}All tests completed successfully!${NC}"
+"#;
+
+pub const PROJECT_MCP_INSPECTOR_TEMPLATE: &str = r#"#!/usr/bin/env bash
+
+set -euo pipefail
+
+pushd server
+cargo build
+popd
+
+npx @modelcontextprotocol/inspector ./server/target/debug/{{name}}-server
 "#;
